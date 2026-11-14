@@ -9,6 +9,18 @@
 
 static std::vector<Entity> gE;
 static float gSpawnT = 25.0f;
+struct FlyingItem { Vector3 p, v; float life; bool bottle; int book; };
+static std::vector<FlyingItem> gFlying;
+static Texture2D gWomanFace{};
+static Texture2D gBookTex[4]{};
+static bool gTexturesLoaded = false;
+static void LoadEntityTextures() {
+    if (gTexturesLoaded) return;
+    gWomanFace = LoadTexture("woman_face.png");
+    const char* names[4] = {"book_10.png", "book_9.png", "book_8.png", "book_7.png"};
+    for (int i=0;i<4;i++) gBookTex[i] = LoadTexture(names[i]);
+    gTexturesLoaded = true;
+}
 
 static float Frand(float a, float b) { return a + (b - a) * (float)GetRandomValue(0, 10000) / 10000.0f; }
 static float Dist(Vector2 a, Vector2 b) { return hypotf(a.x - b.x, a.y - b.y); }
@@ -104,11 +116,23 @@ static void TrySpawn(const Player& pl) {
 }
 
 static void Think(Entity& e, Player& pl, float dt) {
+    if (e.type == E_HOUND && e.stunT > 0) {
+        e.stunT = fmaxf(0, e.stunT - dt); e.yaw += sinf(e.t * 2.7f) * dt * 0.75f;
+        return;
+    }
     Vector2 pp = {pl.pos.x, pl.pos.z};
     float d = Dist(e.pos, pp);
     e.t += dt;
     switch (e.type) {
-    case E_HOUND: {   // слышит шум, преследует; зрительный контакт заставляет колебаться
+    case E_HOUND: {   // женщина-гончая: ползёт на четырёх конечностях и бросает учебники
+        e.throwCd -= dt;
+        if (e.st == S_CHASE && e.throwCd <= 0 && d < 15.0f && d > 3.0f) {
+            Vector3 eye = {pl.pos.x, 1.25f, pl.pos.z};
+            Vector2 dir = {eye.x - e.pos.x, eye.z - e.pos.y}; float len = hypotf(dir.x,dir.y)+0.001f;
+            int bi = GetRandomValue(0,3);
+            gFlying.push_back({{e.pos.x,0.72f,e.pos.y}, {dir.x/len*7.2f, 4.0f, dir.y/len*7.2f}, 4.0f, false, bi});
+            e.throwCd = Frand(3.8f,6.2f);
+        }
         float hear = pl.noise * 20.0f;
         bool eye = d < 9 && d > 1.5f && LookingAt(pl, e.pos, 0.93f, 0.7f) && LineClear(pp, e.pos);
         auto alert = [&] { e.st = S_CHASE; e.lose = 0; Sfx(SFX_HOUND, Vol(d), Pan(pl, e.pos)); };
@@ -182,9 +206,35 @@ static void Think(Entity& e, Player& pl, float dt) {
     }
 }
 
-void EntitiesReset() { gE.clear(); gSpawnT = 25.0f; }
+void EntitiesReset() { gE.clear(); gFlying.clear(); gSpawnT = 25.0f; }
+
+void EntitiesThrowBottle(Player& pl) {
+    if (pl.emptyBottles <= 0) return;
+    pl.emptyBottles--;
+    Vector3 f = Forward(pl);
+    Vector3 start = EyePos(pl);
+    start.y -= 0.12f;
+    gFlying.push_back({start, {f.x*10.0f, f.y*10.0f+2.1f, f.z*10.0f}, 3.0f, true, -1});
+    Sfx(SFX_PICK, 0.65f);
+}
 
 void EntitiesUpdate(Player& pl, float dt, float insane) {
+    // Полёт снарядов: интегрирование скорости и гравитации, столкновение с полом/стенами.
+    for (size_t i=0; i<gFlying.size();) {
+        FlyingItem& q = gFlying[i]; q.life -= dt; q.v.y -= 9.81f*dt;
+        q.p.x += q.v.x*dt; q.p.y += q.v.y*dt; q.p.z += q.v.z*dt;
+        bool remove = q.life <= 0 || q.p.y < 0.12f || CircleHits(q.p.x,q.p.z,0.12f);
+        if (q.bottle && q.p.y > 0.35f) {
+            for (Entity& e : gE) if (e.type == E_HOUND && e.stunT <= 0 && hypotf(e.pos.x-q.p.x,e.pos.y-q.p.z)<0.85f && q.p.y<1.65f) {
+                e.stunT = 15.0f; e.st = S_IDLE; e.lose = 0; remove = true;
+                Say(T("Bottle hit! The woman is stunned.", "Попадание бутылкой! Женщина оглушена на 15 секунд."), 3.0f);
+                Sfx(SFX_HIT,0.9f); Haptic(140); break;
+            }
+        } else if (!q.bottle && hypotf(pl.pos.x-q.p.x,pl.pos.z-q.p.z)<0.48f && q.p.y>0.35f && q.p.y<1.85f) {
+            Hurt(pl, 8.0f, 2.0f); remove = true;
+        }
+        if (remove) gFlying.erase(gFlying.begin()+i); else i++;
+    }
     gSpawnT -= dt * (1.0f + insane * 1.5f + (pl.sanity <= 0 ? 2.0f : 0.0f));
     if (gSpawnT <= 0) { gSpawnT = Frand(10, 20); TrySpawn(pl); }
     Vector2 pp = {pl.pos.x, pl.pos.z};
@@ -202,6 +252,7 @@ static Color C(int r, int g, int b, float L) { L = L < 0 ? 0 : L > 1 ? 1 : L; re
 static void Beg(const Entity& e) { rlPushMatrix(); rlTranslatef(e.pos.x - gOrg.x, 0, e.pos.y - gOrg.z); rlRotatef(e.yaw * RAD2DEG, 0, 1, 0); }
 
 void EntitiesDraw(const Player& pl, bool glow) {
+    LoadEntityTextures();
     Vector2 pp = {pl.pos.x, pl.pos.z};
     for (const Entity& e : gE) {
         if (Dist(e.pos, pp) > 34) continue;
@@ -210,14 +261,28 @@ void EntitiesDraw(const Player& pl, bool glow) {
         switch (e.type) {
         case E_HOUND:
             if (!glow) {
-                float sw = sinf(e.t * 14) * (e.st == S_CHASE ? 0.14f : 0.05f);
-                Color body = C(72, 56, 46, L), head = C(112, 94, 82, L), leg = C(58, 44, 36, L);
-                DrawCube({0, 0.62f, 0}, 0.5f, 0.48f, 1.1f, body);
-                DrawCube({0, 0.74f, 0.72f}, 0.36f, 0.34f, 0.42f, head);
-                DrawCube({-0.2f, 0.22f, 0.38f + sw}, 0.11f, 0.44f, 0.11f, leg);
-                DrawCube({0.2f, 0.22f, 0.38f - sw}, 0.11f, 0.44f, 0.11f, leg);
-                DrawCube({-0.2f, 0.22f, -0.38f - sw}, 0.11f, 0.44f, 0.11f, leg);
-                DrawCube({0.2f, 0.22f, -0.38f + sw}, 0.11f, 0.44f, 0.11f, leg);
+                float sw = e.stunT > 0 ? 0.015f : sinf(e.t * 10.5f) * (e.st == S_CHASE ? 0.19f : 0.08f);
+                Color skin = C(218, 184, 164, L), pink = C(190, 132, 137, L), hair = C(225, 218, 204, L);
+                // Низкая четвероногая поза: корпус, плечи, таз и четыре анимируемые конечности.
+                DrawCube({0, 0.57f, -0.02f}, 0.58f, 0.48f, 1.02f, pink);
+                DrawCube({0, 0.78f, 0.48f}, 0.43f, 0.36f, 0.42f, skin);
+                DrawCube({0, 1.08f, 0.62f}, 0.39f, 0.40f, 0.38f, skin);
+                DrawCube({0, 1.27f, 0.59f}, 0.43f, 0.20f, 0.39f, hair);
+                DrawCube({-0.19f, 1.08f, 0.79f}, 0.055f, 0.055f, 0.025f, C(45,55,65,L));
+                DrawCube({0.19f, 1.08f, 0.79f}, 0.055f, 0.055f, 0.025f, C(45,55,65,L));
+                DrawCube({0, 0.98f, 0.80f}, 0.10f, 0.025f, 0.025f, C(130,75,75,L));
+                for (int side=-1; side<=1; side+=2) {
+                    float x=side*0.23f;
+                    DrawCube({x,0.36f,0.40f+sw},0.16f,0.48f,0.17f,skin);
+                    DrawCube({x,0.13f,0.57f+sw},0.17f,0.12f,0.30f,skin);
+                    DrawCube({x,0.35f,-0.40f-sw},0.17f,0.50f,0.18f,skin);
+                    DrawCube({x,0.13f,-0.57f-sw},0.17f,0.12f,0.30f,skin);
+                }
+                if (gWomanFace.id) {
+                    rlSetTexture(gWomanFace.id); rlBegin(RL_QUADS); rlColor4ub(255,255,255,(unsigned char)(L*255));
+                    rlTexCoord2f(0,1); rlVertex3f(-0.19f,0.91f,0.805f); rlTexCoord2f(1,1); rlVertex3f(0.19f,0.91f,0.805f);
+                    rlTexCoord2f(1,0); rlVertex3f(0.19f,1.23f,0.805f); rlTexCoord2f(0,0); rlVertex3f(-0.19f,1.23f,0.805f); rlEnd(); rlSetTexture(0);
+                }
             } else {
                 DrawCube({-0.1f, 0.8f, 0.94f}, 0.06f, 0.05f, 0.04f, C(255, 40, 30, 1));
                 DrawCube({0.1f, 0.8f, 0.94f}, 0.06f, 0.05f, 0.04f, C(255, 40, 30, 1));
@@ -272,5 +337,10 @@ void EntitiesDraw(const Player& pl, bool glow) {
             break;
         }
         rlPopMatrix();
+    }
+    for (const FlyingItem& q : gFlying) {
+        if (q.bottle) DrawCube({q.p.x-gOrg.x,q.p.y,q.p.z-gOrg.z},0.13f,0.30f,0.13f,Color{165,205,220,220});
+        else if (q.book >= 0 && q.book < 4 && gBookTex[q.book].id) DrawCubeTexture(gBookTex[q.book],{q.p.x-gOrg.x,q.p.y,q.p.z-gOrg.z},0.42f,0.55f,0.10f,WHITE);
+        else DrawCube({q.p.x-gOrg.x,q.p.y,q.p.z-gOrg.z},0.42f,0.55f,0.10f,Color{35,48,90,255});
     }
 }

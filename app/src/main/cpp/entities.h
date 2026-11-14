@@ -8,11 +8,12 @@ enum EState { S_IDLE, S_PATROL, S_CHASE, S_ATTACK };
 struct Entity {
     EType type; EState st;
     Vector2 pos;              // x, z в мире
-    float yaw, timer, lookT, pathT, atkCd, life, t, lose;
+    float yaw, timer, lookT, pathT, atkCd, life, t, lose, stunT, throwCd;
     Vector2 target, wp;       // цель патруля / следующая клетка пути
     bool flag;                // Кожекрад: true = уже раскрыт; Синди: true = игрок уже предупреждён
 };
 
 void EntitiesReset();
+void EntitiesThrowBottle(Player& pl);
 void EntitiesUpdate(Player& pl, float dt, float insane);   // insane 0..1 - чем ниже рассудок, тем чаще спавн
 void EntitiesDraw(const Player& pl, bool glowPass);        // glowPass: светящиеся части (глаза, улыбки)

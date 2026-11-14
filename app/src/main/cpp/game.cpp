@@ -258,14 +258,14 @@ static void DrawHud(const Player& pl, const TouchState& t, int W, int H, bool ha
         DrawCircleV(t.joyP, R * 0.4f, Fade(WHITE, 0.35f));
     } else DrawCircleLines((int)(W * 0.14f), (int)(H * 0.72f), H * 0.15f, Fade(WHITE, 0.18f));
 
-    const char* names[4] = {T("RUN", "БЕГ"), T("LIGHT", "СВЕТ"), T("WATER", "ВОДА"), T("MED", "МЕД")};
-    for (int i = 0; i < 4; i++) {
+    const char* names[5] = {T("RUN", "БЕГ"), T("LIGHT", "СВЕТ"), T("WATER", "ВОДА"), T("MED", "МЕД"), T("THROW", "БРОСОК")};
+    for (int i = 0; i < 5; i++) {
         float r; Vector2 c = ButtonCenter(i, W, H, &r);
         bool on = (i == 0 && t.sprint) || (i == 1 && pl.flash);
         DrawCircleV(c, r, Fade(on ? Col(255, 230, 120, 1) : WHITE, on ? 0.55f : 0.16f));
         DrawCircleLines((int)c.x, (int)c.y, r, Fade(WHITE, 0.55f));
         Txt(names[i], c.x, c.y - fs * 0.55f, fs * 0.8f, WHITE, 1);
-        if (i >= 2) { snprintf(buf, sizeof buf, "x%d", i == 2 ? pl.water : pl.meds); Txt(buf, c.x, c.y + fs * 0.25f, fs * 0.8f, Fade(WHITE, 0.9f), 1); }
+        if (i >= 2) { int count = i == 2 ? pl.water : i == 3 ? pl.meds : pl.emptyBottles; snprintf(buf, sizeof buf, "x%d", count); Txt(buf, c.x, c.y + fs * 0.25f, fs * 0.8f, Fade(WHITE, 0.9f), 1); }
     }
     if (gMsgT > 0) Txt(gMsg, W / 2.0f, H * 0.86f, fs, Fade(Col(255, 245, 190, 1), fminf(1.0f, gMsgT)), 1);
 }
@@ -328,9 +328,10 @@ void GameRun() {
                 TakeItem(it); Sfx(SFX_PICK);
             }
             if (t.tDrink && pl.water > 0) {                                 // Миндальная вода: +35 рассудка
-                pl.water--; pl.sanity = fminf(100, pl.sanity + 35); Sfx(SFX_DRINK, 0.8f);
+                pl.water--; pl.emptyBottles++; pl.sanity = fminf(100, pl.sanity + 35); Sfx(SFX_DRINK, 0.8f);
                 Say(T("Almond Water: you feel clearer.", "Миндальная вода: мысли проясняются."));
             }
+            if (t.tThrow && pl.emptyBottles > 0) EntitiesThrowBottle(pl);
             if (t.tMed && pl.meds > 0 && pl.health < 100) { pl.meds--; pl.health = fminf(100, pl.health + 40); Sfx(SFX_PICK); }
 
             // рассудок: падает от блуждания и тьмы (фонарик замедляет падение), при 0 начинается безумие

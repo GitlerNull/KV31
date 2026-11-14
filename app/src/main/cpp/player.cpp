@@ -25,12 +25,13 @@ Vector2 ButtonCenter(int i, int W, int H, float* radius) {
         case 0:  return {W - 2.2f * r, H - 2.2f * r};   // бег
         case 1:  return {W - 5.0f * r, H - 1.7f * r};   // фонарик
         case 2:  return {W - 2.2f * r, H - 5.2f * r};   // вода
-        default: return {W - 5.0f * r, H - 4.4f * r};   // аптечка
+        case 3:  return {W - 5.0f * r, H - 4.4f * r};   // аптечка
+        default: return {W - 5.0f * r, H - 7.0f * r};   // бросок бутылки
     }
 }
 
 static int HitButton(Vector2 p, int W, int H) {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 5; i++) {
         float r; Vector2 c = ButtonCenter(i, W, H, &r);
         if (hypotf(p.x - c.x, p.y - c.y) < r * 1.25f) return i;
     }
@@ -52,7 +53,7 @@ TouchState ReadTouch(int W, int H) {
             if (nS >= 10) continue;
             s = &S[nS++]; *s = Slot{id, 0, -1, p, false};
             int b = HitButton(p, W, H);
-            if (b >= 0) { s->role = 3; s->btn = b; t.tFlash |= (b == 1); t.tDrink |= (b == 2); t.tMed |= (b == 3); }
+            if (b >= 0) { s->role = 3; s->btn = b; t.tFlash |= (b == 1); t.tDrink |= (b == 2); t.tMed |= (b == 3); t.tThrow |= (b == 4); }
             else if (p.x < W * 0.5f) { s->role = 1; joyOrigin = p; }
             else s->role = 2;
             t.anyNew = true;

@@ -30,7 +30,7 @@ add_library(game SHARED
   ${RAYLIB_SRC}/rtext.c ${RAYLIB_SRC}/rmodels.c ${RAYLIB_SRC}/raudio.c ${RAYLIB_SRC}/utils.c
   ${GLUE_DIR}/android_native_app_glue.c)
 
-target_include_directories(game PRIVATE ${RAYLIB_SRC} ${GLUE_DIR})
+target_include_directories(game PRIVATE ${RAYLIB_SRC} ${RAYLIB_SRC}/external ${GLUE_DIR})
 target_compile_definitions(game PRIVATE PLATFORM_ANDROID GRAPHICS_API_OPENGL_ES2)
 target_compile_options(game PRIVATE -Wno-everything)
 target_link_options(game PRIVATE -u ANativeActivity_onCreate)
