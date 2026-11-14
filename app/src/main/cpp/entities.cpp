@@ -340,7 +340,10 @@ void EntitiesDraw(const Player& pl, bool glow) {
     }
     for (const FlyingItem& q : gFlying) {
         if (q.bottle) DrawCube({q.p.x-gOrg.x,q.p.y,q.p.z-gOrg.z},0.13f,0.30f,0.13f,Color{165,205,220,220});
-        else if (q.book >= 0 && q.book < 4 && gBookTex[q.book].id) DrawCubeTexture(gBookTex[q.book],{q.p.x-gOrg.x,q.p.y,q.p.z-gOrg.z},0.42f,0.55f,0.10f,WHITE);
+        else if (q.book >= 0 && q.book < 4)
+        DrawCube({q.p.x-gOrg.x,q.p.y,q.p.z-gOrg.z},
+                 0.42f,0.55f,0.10f,
+                 Color{55,65,105,255});
         else DrawCube({q.p.x-gOrg.x,q.p.y,q.p.z-gOrg.z},0.42f,0.55f,0.10f,Color{35,48,90,255});
     }
 }
