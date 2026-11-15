@@ -22,9 +22,10 @@ namespace {
 Font gFont;
 ProcAssets gA;
 Texture2D gPortrait{};
+Texture2D gWallCaption{};
 Shader sh;
 int lView, lDir, lFlash, lFlick, lFogD, lFogC, lUnlit;
-char gMsg[128]; float gMsgT = 0;
+char gMsg[256]; float gMsgT = 0;
 enum State { ST_MENU, ST_LEVEL_SELECT, ST_SETTINGS, ST_PLAY, ST_DEAD, ST_WON } state = ST_MENU;
 struct GameSettings {
     int viewChunks = 2;                 // радиус в чанках: 1..3
@@ -58,7 +59,9 @@ uniform sampler2D texture0;
 uniform vec3 viewPos; uniform vec3 camDir; uniform vec3 fogColor;
 uniform float flash; uniform float flicker; uniform float fogDensity; uniform float unlit;
 void main(){
-    vec3 tex = texture2D(texture0, fragUV).rgb * fragColor.rgb;
+    vec4 texel = texture2D(texture0, fragUV);
+    if (texel.a < 0.05) discard;
+    vec3 tex = texel.rgb * fragColor.rgb;
     float d = length(fragPos - viewPos);
     vec3 dir = (fragPos - viewPos) / max(d, 0.001);
     float cone = smoothstep(0.88, 0.965, dot(dir, camDir));
@@ -67,7 +70,7 @@ void main(){
     vec3 c = (unlit > 0.5) ? tex : tex * (light + 0.02);
     float k = d * fogDensity;
     c = mix(c, fogColor, clamp(1.0 - exp(-k*k), 0.0, 1.0));
-    gl_FragColor = vec4(c, 1.0);
+    gl_FragColor = vec4(c, texel.a * fragColor.a);
 }
 )";
 
@@ -100,6 +103,36 @@ static void Txt(const char* s, float x, float y, float sz, Color c, int align = 
     Vector2 m = MeasureTextEx(f, s, sz, sz / 12);
     if (align == 1) x -= m.x / 2; else if (align == 2) x -= m.x;
     DrawTextEx(f, s, Vector2{x, y}, sz, sz / 12, c);
+}
+
+static void LoadWallCaption() {
+    if (!gRu) {
+        TraceLog(LOG_WARNING, "Wall caption skipped: Russian font unavailable");
+        return;
+    }
+
+    const char* caption = "ФИЗИКУ УЧИЛ?!";
+    Image image = GenImageColor(1024, 192, BLANK);
+
+    float fontSize = 128.0f;
+    Vector2 size = MeasureTextEx(gFont, caption, fontSize, 2.0f);
+
+    while (size.x > 960.0f && fontSize > 64.0f) {
+        fontSize -= 2.0f;
+        size = MeasureTextEx(gFont, caption, fontSize, 2.0f);
+    }
+
+    Vector2 pos = {
+        (1024.0f - size.x) * 0.5f,
+        (192.0f - fontSize) * 0.5f
+    };
+
+    ImageDrawTextEx(&image, gFont, caption, pos, fontSize, 2.0f, BLACK);
+    gWallCaption = LoadTextureFromImage(image);
+    UnloadImage(image);
+
+    if (gWallCaption.id == 0)
+        TraceLog(LOG_WARNING, "Wall caption texture could not be created");
 }
 
 // ---------- 3D ----------
@@ -152,13 +185,27 @@ static void DrawLevel(const Player& pl) {
         const float z0 = 1 * CELL + 0.20f;
         const float z1 = 2 * CELL - 0.20f;
         const float y0 = 0.45f;
-        const float y1 = WALL_H - 0.45f;
+        const float y1 = 2.48f;
         rlSetTexture(gPortrait.id);
         Quad(
             Wv(px, y0, z0), Wv(px, y0, z1),
             Wv(px, y1, z1), Wv(px, y1, z0),
             1.0f, 1.0f, 1.0f, 1.0f, white, 1, 1
         );
+
+        // Чёрная надпись находится на той же стене, немного
+        // ближе к камере, чтобы поверхности не конфликтовали.
+        if (gWallCaption.id > 0) {
+            const float tx = px - 0.012f;
+            rlSetTexture(gWallCaption.id);
+            rlEnableColorBlend();
+            Quad(
+                Wv(tx, 2.58f, z0), Wv(tx, 2.58f, z1),
+                Wv(tx, 2.88f, z1), Wv(tx, 2.88f, z0),
+                1.0f, 1.0f, 1.0f, 1.0f, white, 1, 1
+            );
+            rlDisableColorBlend();
+        }
     }
     rlSetTexture(0);
 }
@@ -317,7 +364,18 @@ static void DrawHud(const Player& pl, const TouchState& t, int W, int H, bool ha
         Txt(names[i], c.x, c.y - fs * 0.55f, fs * 0.8f, WHITE, 1);
         if (i >= 2) { int count = i == 2 ? pl.water : i == 3 ? pl.meds : pl.emptyBottles; snprintf(buf, sizeof buf, "x%d", count); Txt(buf, c.x, c.y + fs * 0.25f, fs * 0.8f, Fade(WHITE, 0.9f), 1); }
     }
-    if (gMsgT > 0) Txt(gMsg, W / 2.0f, H * 0.86f, fs, Fade(Col(255, 245, 190, 1), fminf(1.0f, gMsgT)), 1);
+    if (gMsgT > 0) {
+        Font msgFont = gRu ? gFont : GetFontDefault();
+        float msgSize = fs;
+        float maxWidth = W * 0.94f;
+        float textWidth = MeasureTextEx(msgFont, gMsg, msgSize, msgSize / 12.0f).x;
+
+        if (textWidth > maxWidth && textWidth > 0.0f)
+            msgSize *= maxWidth / textWidth;
+
+        Txt(gMsg, W / 2.0f, H * 0.86f, msgSize,
+            Fade(Col(255, 245, 190, 1), fminf(1.0f, gMsgT)), 1);
+    }
 }
 
 static void Overlay(int W, int H, float insane, float hurt) {
@@ -468,6 +526,7 @@ static const char* RADIO_RU[] = {
 
 void GameRun() {
     gRu = LoadUiFont();
+    LoadWallCaption();
     gA = ProcInit();
     gPortrait = LoadTexture("kv31_wall_portrait.jpg");
     if (gPortrait.id == 0) {
@@ -610,6 +669,7 @@ void GameRun() {
     if (settingsDirty) SaveSettings();
     EntitiesUnload();
     if (gPortrait.id > 0) UnloadTexture(gPortrait);
+    if (gWallCaption.id > 0) UnloadTexture(gWallCaption);
     UnloadShader(sh);
     ProcFree(gA);
     if (gRu) UnloadFont(gFont);

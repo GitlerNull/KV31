@@ -380,7 +380,7 @@ void EntitiesUpdate(Player& pl, float dt, float insane, bool otherEntitiesEnable
         if (q.bottle && q.p.y > 0.35f) {
             for (Entity& e : gE) if (e.type == E_HOUND && e.stunT <= 0 && hypotf(e.pos.x-q.p.x,e.pos.y-q.p.z)<0.85f && q.p.y<1.65f) {
                 e.stunT = 15.0f; e.st = S_IDLE; e.lose = 0; remove = true;
-                Say(T("Bottle hit! The woman is stunned.", "Попадание бутылкой! Женщина оглушена на 15 секунд."), 3.0f);
+                Say(T("Bottle hit! Tatyana Alexandrovna is stunned.", "Попадание бутылкой! Татьяна Александровна оглушена на 15 секунд."), 3.0f);
                 Sfx(SFX_HIT,0.9f); Haptic(140); break;
             }
          } else if (!q.bottle &&
@@ -435,7 +435,7 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
                     modelPos,
                     {0.0f, 1.0f, 0.0f},
                     e.yaw * RAD2DEG,
-                    {0.78f, 0.78f, 0.78f},
+                    {0.62f, 0.62f, 0.62f},
                     WHITE
                 );
 
@@ -451,17 +451,6 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
                     e.pos.y - gOrg.z
                 );
                 rlRotatef(e.yaw * RAD2DEG, 0, 1, 0);
-
-                DrawCube(
-                    {-0.10f, 1.72f, 0.20f},
-                    0.06f, 0.05f, 0.04f,
-                    C(255, 40, 30, 1)
-                );
-                DrawCube(
-                    {0.10f, 1.72f, 0.20f},
-                    0.06f, 0.05f, 0.04f,
-                    C(255, 40, 30, 1)
-                );
 
                 rlPopMatrix();
             }
@@ -496,8 +485,6 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
                     rlTexCoord2f(1,0); rlVertex3f(0.19f,1.23f,0.805f); rlTexCoord2f(0,0); rlVertex3f(-0.19f,1.23f,0.805f); rlEnd(); rlSetTexture(0);
                 }
             } else {
-                DrawCube({-0.1f, 0.8f, 0.94f}, 0.06f, 0.05f, 0.04f, C(255, 40, 30, 1));
-                DrawCube({0.1f, 0.8f, 0.94f}, 0.06f, 0.05f, 0.04f, C(255, 40, 30, 1));
             }
             break;
         case E_SMILER:
