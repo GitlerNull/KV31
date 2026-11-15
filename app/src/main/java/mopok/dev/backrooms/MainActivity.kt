@@ -64,6 +64,20 @@ class MainActivity : NativeActivity() {
         return null
     }
 
+    private val settingsPrefs by lazy {
+        getSharedPreferences("KV31Settings", MODE_PRIVATE)
+    }
+
+    /** Чтение настройки из постоянного хранилища Android. */
+    fun loadSettingValue(index: Int): Int {
+        return settingsPrefs.getInt("value_$index", 0)
+    }
+
+    /** Сохранение настройки в постоянное хранилище Android. */
+    fun saveSettingValue(index: Int, value: Int) {
+        settingsPrefs.edit().putInt("value_$index", value).apply()
+    }
+
     /** Вызывается из C++ (Haptic) через JNI. */
     @Suppress("DEPRECATION")
     fun vibrate(ms: Int) {

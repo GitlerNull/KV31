@@ -12,6 +12,8 @@ static JavaVM* gVM = nullptr;
 static jobject gAct = nullptr;
 static jmethodID gVib = nullptr;
 static jmethodID gFontData = nullptr;
+static jmethodID gLoadSetting = nullptr;
+static jmethodID gSaveSetting = nullptr;
 float gDensity = 2.0f;
 int   gSdk = 0;
 
@@ -28,6 +30,8 @@ Java_mopok_dev_backrooms_NativeBridge_nativeInit(JNIEnv* env, jobject, jobject a
     jclass c = env->GetObjectClass(activity);
     gVib = env->GetMethodID(c, "vibrate", "(I)V");
     gFontData = env->GetMethodID(c, "loadUiFontData", "()[B");
+    gLoadSetting = env->GetMethodID(c, "loadSettingValue", "(I)I");
+    gSaveSetting = env->GetMethodID(c, "saveSettingValue", "(II)V");
     env->DeleteLocalRef(c);
 }
 
@@ -60,6 +64,46 @@ unsigned char* LoadSystemFontData(int* size) {
     }
     if (attached) gVM->DetachCurrentThread();
     return result;
+}
+
+int LoadSettingValue(int index) {
+    if (!gVM || !gAct || !gLoadSetting) return 0;
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+
+    if (gVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+        if (gVM->AttachCurrentThread(&env, nullptr) != JNI_OK) return 0;
+        attached = true;
+    }
+
+    jint result = env->CallIntMethod(gAct, gLoadSetting, (jint)index);
+
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        result = 0;
+    }
+
+    if (attached) gVM->DetachCurrentThread();
+    return (int)result;
+}
+
+void SaveSettingValue(int index, int value) {
+    if (!gVM || !gAct || !gSaveSetting) return;
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+
+    if (gVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+        if (gVM->AttachCurrentThread(&env, nullptr) != JNI_OK) return;
+        attached = true;
+    }
+
+    env->CallVoidMethod(gAct, gSaveSetting, (jint)index, (jint)value);
+
+    if (env->ExceptionCheck()) env->ExceptionClear();
+
+    if (attached) gVM->DetachCurrentThread();
 }
 
 void Haptic(int ms) {

@@ -415,18 +415,18 @@ static void DrawSettings(int W, int H) {
 }
 
 static void LoadSettings() {
-    if (LoadStorageValue(0) != SETTINGS_MAGIC) return;
-    settings.viewChunks = Clamp(LoadStorageValue(1), VIEW_CHUNKS_MIN, VIEW_CHUNKS_MAX);
-    settings.otherEntities = LoadStorageValue(2) != 0;
-    float sens = LoadStorageValue(3) / 1000000.0f;
+    if (LoadSettingValue(0) != SETTINGS_MAGIC) return;
+    settings.viewChunks = Clamp(LoadSettingValue(1), VIEW_CHUNKS_MIN, VIEW_CHUNKS_MAX);
+    settings.otherEntities = LoadSettingValue(2) != 0;
+    float sens = LoadSettingValue(3) / 1000000.0f;
     settings.sensitivity = Clamp(sens, SENS_MIN, SENS_MAX);
 }
 
 static void SaveSettings() {
-    SaveStorageValue(0, SETTINGS_MAGIC);
-    SaveStorageValue(1, settings.viewChunks);
-    SaveStorageValue(2, settings.otherEntities ? 1 : 0);
-    SaveStorageValue(3, (int)lroundf(settings.sensitivity * 1000000.0f));
+    SaveSettingValue(0, SETTINGS_MAGIC);
+    SaveSettingValue(1, settings.viewChunks);
+    SaveSettingValue(2, settings.otherEntities ? 1 : 0);
+    SaveSettingValue(3, (int)lroundf(settings.sensitivity * 1000000.0f));
     settingsDirty = false;
 }
 
