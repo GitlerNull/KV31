@@ -181,8 +181,10 @@ static void TrySpawn(const Player& pl) {
     int hostile = 0; bool cindy = false;
     for (auto& e : gE) { if (e.type == E_CINDY) cindy = true; else hostile++; }
     int r = GetRandomValue(0, 99);
-    EType t = r < 38 ? E_HOUND : r < 68 ? E_SMILER : r < 90 ? E_STEALER : E_CINDY;
-    if (t == E_CINDY && (cindy || pl.sanity > 65)) t = E_HOUND;     // Синди приходит к тем, кому плохо
+    // На уровне 0 Гончая только одна: особая сущность в тёмной комнате.
+    // Остальные вероятности перенормированы без случайного спавна Гончей.
+    EType t = r < 48 ? E_SMILER : r < 84 ? E_STEALER : E_CINDY;
+    if (t == E_CINDY && (cindy || pl.sanity > 65)) t = E_STEALER; // Синди приходит к тем, кому плохо
     if (t != E_CINDY && hostile >= 4) return;
     Vector2 pp = {pl.pos.x, pl.pos.z};
     for (int k = 0; k < 30; k++) {
@@ -198,6 +200,27 @@ static void TrySpawn(const Player& pl) {
         if (t == E_STEALER || t == E_CINDY) { e.st = S_PATROL; e.target = RandomOpen(p, 10); }
         gE.push_back(e); return;
     }
+}
+
+
+// Границы внутренней части комнаты Гончей.
+// Комната занимает клетки x=5..7, z=1..3.
+static bool HoundRoomContains(Vector2 p) {
+    int cx = CellOf(p.x);
+    int cz = CellOf(p.y);
+    return cx >= 5 && cx <= 7 && cz >= 1 && cz <= 3;
+}
+
+static Vector2 HoundRoomPoint() {
+    int cx = GetRandomValue(5, 7);
+    int cz = GetRandomValue(1, 3);
+    return CellCenter(cx, cz);
+}
+
+static void KeepHoundInRoom(Entity& e) {
+    // Не позволяем центру сущности пересечь стены комнаты.
+    e.pos.x = fmaxf(10.35f, fminf(15.65f, e.pos.x));
+    e.pos.y = fmaxf(2.35f, fminf(7.65f, e.pos.y));
 }
 
 static void Think(Entity& e, Player& pl, float dt) {
@@ -222,15 +245,31 @@ static void Think(Entity& e, Player& pl, float dt) {
         bool eye = d < 9 && d > 1.5f && LookingAt(pl, e.pos, 0.93f, 0.7f) && LineClear(pp, e.pos);
         auto alert = [&] { e.st = S_CHASE; e.lose = 0; Sfx(SFX_HOUND, Vol(d), Pan(pl, e.pos)); };
         switch (e.st) {
-        case S_IDLE:   e.timer -= dt; if (e.timer <= 0) { e.target = RandomOpen(e.pos, 10); e.st = S_PATROL; } if (d < hear) alert(); break;
+        case S_IDLE:   e.timer -= dt; if (e.timer <= 0) { e.target = HoundRoomPoint(); e.st = S_PATROL; } if (d < hear) alert(); break;
         case S_PATROL: Follow(e, e.target, 2.4f, dt); if (Dist(e.pos, e.target) < 1.2f) { e.st = S_IDLE; e.timer = Frand(1, 3); } if (d < hear) alert(); break;
         case S_CHASE:
-            Follow(e, pp, eye ? 1.2f : 4.8f, dt);
-            if (d < 1.4f) { e.st = S_ATTACK; e.atkCd = 0.2f; }
-            if (d > hear * 1.2f + 6) { e.lose += dt; if (e.lose > 5) { e.st = S_PATROL; e.target = RandomOpen(e.pos, 10); } } else e.lose = 0;
+            if (HoundRoomContains(pp)) {
+                Follow(e, pp, eye ? 1.2f : 4.8f, dt);
+            } else {
+                Face(e, pp);
+            }
+            if (d < 1.4f && HoundRoomContains(pp)) {
+                e.st = S_ATTACK;
+                e.atkCd = 0.2f;
+            }
+            if (d > hear * 1.2f + 6) {
+                e.lose += dt;
+                if (e.lose > 5) {
+                    e.st = S_PATROL;
+                    e.target = HoundRoomPoint();
+                }
+            } else {
+                e.lose = 0;
+            }
             break;
         case S_ATTACK: e.atkCd -= dt; if (e.atkCd <= 0) { if (d < 1.7f) Hurt(pl, 10, 4); e.atkCd = 0.9f; } if (d >= 1.9f) e.st = S_CHASE; break;
         }
+        KeepHoundInRoom(e);
     } break;
 
     case E_SMILER: {  // прячется в темноте; боится света; нападает, если на него долго смотреть
@@ -291,7 +330,25 @@ static void Think(Entity& e, Player& pl, float dt) {
     }
 }
 
-void EntitiesReset() { gE.clear(); gFlying.clear(); gSpawnT = 25.0f; }
+void EntitiesReset() {
+    gE.clear();
+    gFlying.clear();
+    gSpawnT = 25.0f;
+
+    // Единственная Гончая уровня 0: стоит в центре комнаты с аптечками.
+    // Клетка (6,2), центр клетки в мировых координатах (13,5).
+    Entity h{};
+    h.type = E_HOUND;
+    h.st = S_IDLE;
+    h.pos = {13.0f, 5.0f};
+    h.wp = h.pos;
+    h.target = h.pos;
+    h.yaw = 0.0f;
+    h.timer = 0.0f;
+    h.life = 1000000.0f;
+    h.persistent = true;
+    gE.push_back(h);
+}
 
 void EntitiesThrowBottle(Player& pl) {
     if (pl.emptyBottles <= 0) return;
@@ -326,9 +383,9 @@ void EntitiesUpdate(Player& pl, float dt, float insane) {
     for (size_t i = 0; i < gE.size();) {
         Entity& e = gE[i];
         float d = Dist(e.pos, pp);
-        e.life -= dt * (d > 42 ? 4.0f : 1.0f);
+        if (!e.persistent) e.life -= dt * (d > 42 ? 4.0f : 1.0f);
         if (d <= 42) Think(e, pl, dt);                       // дальше не думаем - экономим BFS и генерацию чанков
-        if (e.life <= 0 || d > 55) gE.erase(gE.begin() + i); else i++;
+        if (!e.persistent && (e.life <= 0 || d > 55)) gE.erase(gE.begin() + i); else i++;
     }
 }
 
@@ -347,7 +404,7 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader) {
         // ниже автоматически останется старая модель.
         if (e.type == E_HOUND && LoadHoundModel()) {
             if (!glow) {
-                // UpdateHoundAnimation(e);
+                UpdateHoundAnimation(e);
 
                 Vector3 modelPos = {
                     e.pos.x - gOrg.x,

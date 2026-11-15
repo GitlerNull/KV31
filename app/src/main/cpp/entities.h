@@ -11,6 +11,7 @@ struct Entity {
     float yaw, timer, lookT, pathT, atkCd, life, t, lose, stunT, throwCd;
     Vector2 target, wp;       // цель патруля / следующая клетка пути
     bool flag;                // Кожекрад: true = уже раскрыт; Синди: true = игрок уже предупреждён
+    bool persistent{};        // особая сущность уровня: не удаляется по времени/дистанции
 };
 
 void EntitiesReset();

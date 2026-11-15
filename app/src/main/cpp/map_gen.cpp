@@ -31,6 +31,12 @@ static bool WallSegment(int rx, int ry, int k, bool horiz, bool hallInside) {
 }
 
 static bool GenSolid(int x, int y) {
+    // Фиксированная тёмная комната: room (1,0), внутренние клетки x=5..7, z=1..3.
+    // Периметр закрыт, кроме одного входа со стороны стартовой комнаты (4,2).
+    if (x >= 4 && x <= 8 && y >= 0 && y <= 4) {
+        if (x == 4 && y == 2) return false;
+        return x == 4 || x == 8 || y == 0 || y == 4;
+    }
     int mx = PosMod(x, 4), my = PosMod(y, 4), rx = FloorDiv(x, 4), ry = FloorDiv(y, 4);
     if (mx == 0 && my == 0) {                       // столб на углу четырёх комнат
         bool hall = SameHall(rx - 1, ry - 1, rx, ry - 1) && SameHall(rx - 1, ry, rx, ry) && SameHall(rx - 1, ry - 1, rx - 1, ry);
@@ -63,6 +69,7 @@ static Chunk& MakeChunk(int chx, int chz) {
         for (int x = 0; x < CHUNK; x++) {
             if (c.solid[z][x]) continue;
             int gx = chx * CHUNK + x, gz = chz * CHUNK + z;
+            if (gx >= 5 && gx <= 7 && gz >= 1 && gz <= 3) continue;     // в тёмной комнате только фиксированные аптечки
             if (abs(gx - 2) + abs(gz - 2) < 6) continue;                 // не у точки старта
             if (c.hasExit && gx == c.exitX && gz == c.exitZ) continue;
             float r = Rand01(gx, gz, 21);
@@ -71,6 +78,15 @@ static Chunk& MakeChunk(int chx, int chz) {
             if (gTaken.count(Key(gx, gz))) continue;
             c.items.push_back({gx, gz, t, false});
         }
+    // Три гарантированные аптечки в комнате с Гончей. gTaken сохраняет подбор
+    // даже после выгрузки и повторной генерации чанка.
+    const int medkitCells[3][2] = {{5, 2}, {6, 1}, {7, 2}};
+    for (const auto& cell : medkitCells) {
+        int gx = cell[0], gz = cell[1];
+        if (FloorDiv(gx, CHUNK) == chx && FloorDiv(gz, CHUNK) == chz && !gTaken.count(Key(gx, gz))) {
+            c.items.push_back({gx, gz, IT_MEDKIT, false});
+        }
+    }
     return c;
 }
 
@@ -104,6 +120,7 @@ bool LineClear(Vector2 a, Vector2 b) {
 
 // Лампа в центре каждой комнаты: целые сектора 5x5 комнат иногда обесточены ("тёмные зоны")
 float LampLevel(int rx, int ry) {
+    if (rx == 1 && ry == 0) return 0.0f; // лампа в комнате с Гончей отсутствует
     if (rx == 0 && ry == 0) return 1.0f;
     int sx = FloorDiv(rx, 5), sy = FloorDiv(ry, 5);
     if (!(sx == 0 && sy == 0) && Rand01(sx, sy, 42) < 0.20f) return 0.0f;
@@ -115,6 +132,8 @@ float LampLevel(int rx, int ry) {
 
 // Билинейная интерполяция яркости четырёх ближайших ламп -> плавные градиенты света и тьмы
 float LightAt(float wx, float wz) {
+    int cx = CellOf(wx), cz = CellOf(wz);
+    if (cx >= 5 && cx <= 7 && cz >= 1 && cz <= 3) return 0.07f; // постоянная темнота внутри комнаты
     float u = (wx / CELL - 2.5f) / 4.0f, v = (wz / CELL - 2.5f) / 4.0f;
     int i = (int)floorf(u), j = (int)floorf(v);
     float tx = u - i, ty = v - j;
