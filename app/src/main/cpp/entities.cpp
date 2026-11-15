@@ -49,6 +49,21 @@ static bool LoadHoundModel() {
 
     gHoundModel = LoadModel("models/hound_woman_rigged.glb");
 
+for (int i = 0; i < gHoundModel.materialCount; i++) {
+    Material *m = &gHoundModel.materials[i];
+
+    TraceLog(LOG_INFO,
+        "HOUND MAT %d: albedo=%u normal=%u roughness=%u metalness=%u occlusion=%u",
+        i,
+        m->maps[MATERIAL_MAP_ALBEDO].texture.id,
+        m->maps[MATERIAL_MAP_NORMAL].texture.id,
+        m->maps[MATERIAL_MAP_ROUGHNESS].texture.id,
+        m->maps[MATERIAL_MAP_METALNESS].texture.id,
+        m->maps[MATERIAL_MAP_OCCLUSION].texture.id
+    );
+}
+
+
     if (gHoundModel.meshCount <= 0) {
         TraceLog(LOG_ERROR, "HOUND: failed to load GLB model");
         return false;
