@@ -332,7 +332,7 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader) {
         // ниже автоматически останется старая модель.
         if (e.type == E_HOUND && LoadHoundModel()) {
             if (!glow) {
-                UpdateHoundAnimation(e);
+                // UpdateHoundAnimation(e);
 
                 Vector3 modelPos = {
                     e.pos.x - gOrg.x,
