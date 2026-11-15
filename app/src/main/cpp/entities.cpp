@@ -234,7 +234,7 @@ static void Think(Entity& e, Player& pl, float dt) {
     switch (e.type) {
     case E_HOUND: {   // женщина-гончая: ползёт на четырёх конечностях и бросает учебники
         e.throwCd -= dt;
-        if (e.st == S_CHASE && e.throwCd <= 0 && d < 15.0f && d > 3.0f) {
+        if (e.st == S_CHASE && HoundRoomContains(pp) && e.throwCd <= 0 && d < 15.0f && d > 3.0f) {
             Vector3 eye = {pl.pos.x, 1.25f, pl.pos.z};
             Vector2 dir = {eye.x - e.pos.x, eye.z - e.pos.y}; float len = hypotf(dir.x,dir.y)+0.001f;
             int bi = GetRandomValue(0,3);
@@ -245,8 +245,8 @@ static void Think(Entity& e, Player& pl, float dt) {
         bool eye = d < 9 && d > 1.5f && LookingAt(pl, e.pos, 0.93f, 0.7f) && LineClear(pp, e.pos);
         auto alert = [&] { e.st = S_CHASE; e.lose = 0; Sfx(SFX_HOUND, Vol(d), Pan(pl, e.pos)); };
         switch (e.st) {
-        case S_IDLE:   e.timer -= dt; if (e.timer <= 0) { e.target = HoundRoomPoint(); e.st = S_PATROL; } if (d < hear) alert(); break;
-        case S_PATROL: Follow(e, e.target, 2.4f, dt); if (Dist(e.pos, e.target) < 1.2f) { e.st = S_IDLE; e.timer = Frand(1, 3); } if (d < hear) alert(); break;
+        case S_IDLE:   e.timer -= dt; if (e.timer <= 0) { e.target = HoundRoomPoint(); e.st = S_PATROL; } if (d < hear || eye) alert(); break;
+        case S_PATROL: Follow(e, e.target, 2.4f, dt); if (Dist(e.pos, e.target) < 1.2f) { e.st = S_IDLE; e.timer = Frand(1, 3); } if (d < hear || eye) alert(); break;
         case S_CHASE:
             if (HoundRoomContains(pp)) {
                 Follow(e, pp, eye ? 1.2f : 4.8f, dt);
@@ -267,7 +267,19 @@ static void Think(Entity& e, Player& pl, float dt) {
                 e.lose = 0;
             }
             break;
-        case S_ATTACK: e.atkCd -= dt; if (e.atkCd <= 0) { if (d < 1.7f) Hurt(pl, 10, 4); e.atkCd = 0.9f; } if (d >= 1.9f) e.st = S_CHASE; break;
+        case S_ATTACK:
+            if (!HoundRoomContains(pp)) {
+                e.st = S_CHASE;
+                e.lose = 0;
+                break;
+            }
+            e.atkCd -= dt;
+            if (e.atkCd <= 0) {
+                if (d < 1.7f) Hurt(pl, 10, 4);
+                e.atkCd = 0.9f;
+            }
+            if (d >= 1.9f) e.st = S_CHASE;
+            break;
         }
         KeepHoundInRoom(e);
     } break;
@@ -372,8 +384,13 @@ void EntitiesUpdate(Player& pl, float dt, float insane) {
                 Say(T("Bottle hit! The woman is stunned.", "Попадание бутылкой! Женщина оглушена на 15 секунд."), 3.0f);
                 Sfx(SFX_HIT,0.9f); Haptic(140); break;
             }
-        } else if (!q.bottle && hypotf(pl.pos.x-q.p.x,pl.pos.z-q.p.z)<0.48f && q.p.y>0.35f && q.p.y<1.85f) {
-            Hurt(pl, 8.0f, 2.0f); remove = true;
+         } else if (!q.bottle &&
+                   hypotf(pl.pos.x-q.p.x, pl.pos.z-q.p.z) < 0.48f &&
+                   q.p.y > 0.35f && q.p.y < 1.85f) {
+            if (HoundRoomContains({pl.pos.x, pl.pos.z})) {
+                Hurt(pl, 8.0f, 2.0f);
+            }
+            remove = true;
         }
         if (remove) gFlying.erase(gFlying.begin()+i); else i++;
     }
