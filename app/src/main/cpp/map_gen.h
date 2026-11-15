@@ -15,7 +15,7 @@ bool   LineClear(Vector2 a, Vector2 b);               // прямая видим
 float  LightAt(float wx, float wz);                   // 0..1 - освещённость лампами в точке
 float  LampLevel(int rx, int ry);                     // яркость лампы комнаты (rx,ry)
 Chunk& GetChunk(int chx, int chz);                    // чанк генерируется на лету при первом обращении
-void   MapUpdate(float px, float pz);                 // выгрузка далёких чанков
+void   MapUpdate(float px, float pz, int keepChunks); // выгрузка чанков за пределами дальности прорисовки
 void   MapReset(uint32_t seed);                       // новый мир (новое зерно, очистка кэша)
 bool   IsExitCell(int cx, int cz);
 bool   NearestExit(float px, float pz, Vector2* out); // ближайший люк в радиусе 5 чанков (радиосигнал M.E.G.)

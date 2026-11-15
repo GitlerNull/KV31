@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <cstdlib>
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -23,7 +24,19 @@ ProcAssets gA;
 Shader sh;
 int lView, lDir, lFlash, lFlick, lFogD, lFogC, lUnlit;
 char gMsg[128]; float gMsgT = 0;
-enum State { ST_MENU, ST_PLAY, ST_DEAD, ST_WON } state = ST_MENU;
+enum State { ST_MENU, ST_LEVEL_SELECT, ST_SETTINGS, ST_PLAY, ST_DEAD, ST_WON } state = ST_MENU;
+struct GameSettings {
+    int viewChunks = 2;                 // радиус в чанках: 1..3
+    bool otherEntities = true;          // все сущности, кроме Физички
+    float sensitivity = 0.0035f;        // текущее значение управления по умолчанию
+};
+GameSettings settings;
+bool settingsDirty = false;
+static constexpr int SETTINGS_MAGIC = 1263948337;
+static constexpr int VIEW_CHUNKS_MIN = 1;
+static constexpr int VIEW_CHUNKS_MAX = 3;
+static constexpr float SENS_MIN = 0.0010f;
+static constexpr float SENS_MAX = 0.0080f;
 }
 
 // vertex-цвет: rgb = оттенок, a = запечённая яркость ламп (смешивание отключено на время 3D-прохода)
@@ -61,16 +74,22 @@ void Say(const char* m, float s) { snprintf(gMsg, sizeof gMsg, "%s", m); gMsgT =
 static float Frand(float a, float b) { return a + (b - a) * (float)GetRandomValue(0, 10000) / 10000.0f; }
 static Color Col(int r, int g, int b, float L) { L = L < 0 ? 0 : L > 1 ? 1 : L; return Color{(unsigned char)r, (unsigned char)g, (unsigned char)b, (unsigned char)(L * 255)}; }
 
-// шрифт с кириллицей берём из assets/font.ttf, если файл положили; иначе интерфейс на английском
+// Сначала пробуем assets/font.ttf, затем системный шрифт Android с кириллицей.
 static bool LoadUiFont() {
     int n = 0; unsigned char* d = LoadFileData("font.ttf", &n);
-    if (!d || n <= 0) return false;
+    bool raylibData = d != nullptr;
+    if (!d || n <= 0) {
+        if (d) UnloadFileData(d);
+        d = LoadSystemFontData(&n);
+        raylibData = false;
+    }
+    if (!d || n <= 0) { if (d) free(d); return false; }
     int cps[200], c = 0;
     for (int i = 32; i < 127; i++) cps[c++] = i;
     for (int i = 0x410; i <= 0x44F; i++) cps[c++] = i;
     cps[c++] = 0x401; cps[c++] = 0x451;
     gFont = LoadFontFromMemory(".ttf", d, n, 40, cps, c);
-    UnloadFileData(d);
+    if (raylibData) UnloadFileData(d); else free(d);
     if (gFont.texture.id == 0) return false;
     SetTextureFilter(gFont.texture, TEXTURE_FILTER_BILINEAR);
     return true;
@@ -96,10 +115,10 @@ static void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, float la, float lb,
     rlEnd();
 }
 
-static const int VIEW_R = 14;   // радиус прорисовки в клетках
+static int ViewRadiusCells() { return settings.viewChunks * CHUNK; } // один чанк = 16 клеток
 
 static void DrawLevel(const Player& pl) {
-    int pcx = CellOf(pl.pos.x), pcz = CellOf(pl.pos.z), R = VIEW_R;
+    int pcx = CellOf(pl.pos.x), pcz = CellOf(pl.pos.z), R = ViewRadiusCells();
     Color white = {255, 255, 255, 255};
     int bx0 = FloorDiv(pcx - R, 3), bx1 = FloorDiv(pcx + R, 3), bz0 = FloorDiv(pcz - R, 3), bz1 = FloorDiv(pcz + R, 3);
     const float B = 3 * CELL;
@@ -129,12 +148,18 @@ static void DrawLevel(const Player& pl) {
 }
 
 static void DrawItems(const Player& pl, float t, bool glow) {
-    int pcx = FloorDiv(CellOf(pl.pos.x), CHUNK), pcz = FloorDiv(CellOf(pl.pos.z), CHUNK);
-    for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++)
-        for (Item& it : GetChunk(pcx + i, pcz + j).items) {
-            if (it.taken) continue;
+    const int R = ViewRadiusCells();
+    const int cellX = CellOf(pl.pos.x), cellZ = CellOf(pl.pos.z);
+    const int minX = FloorDiv(cellX - R, CHUNK);
+    const int maxX = FloorDiv(cellX + R, CHUNK);
+    const int minZ = FloorDiv(cellZ - R, CHUNK);
+    const int maxZ = FloorDiv(cellZ + R, CHUNK);
+    const float maxDistance = (float)R * CELL * 1.4142f;
+    for (int cz = minZ; cz <= maxZ; ++cz) for (int cx = minX; cx <= maxX; ++cx)
+        for (Item& it : GetChunk(cx, cz).items) {
+            if (it.taken || it.cx < cellX - R || it.cx > cellX + R || it.cz < cellZ - R || it.cz > cellZ + R) continue;
             float x = (it.cx + 0.5f) * CELL, z = (it.cz + 0.5f) * CELL;
-            if (hypotf(x - pl.pos.x, z - pl.pos.z) > 26) continue;
+            if (hypotf(x - pl.pos.x, z - pl.pos.z) > maxDistance) continue;
             float L = LightAt(x, z);
             Vector3 p = Wv(x, 0.35f + 0.05f * sinf(t * 2 + it.cx), z);
             if (!glow) {
@@ -153,12 +178,18 @@ static void DrawItems(const Player& pl, float t, bool glow) {
 }
 
 static void DrawExit(const Player& pl, bool glow) {
-    int pcx = FloorDiv(CellOf(pl.pos.x), CHUNK), pcz = FloorDiv(CellOf(pl.pos.z), CHUNK);
-    for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
-        Chunk& c = GetChunk(pcx + i, pcz + j);
-        if (!c.hasExit) continue;
+    const int R = ViewRadiusCells();
+    const int cellX = CellOf(pl.pos.x), cellZ = CellOf(pl.pos.z);
+    const int minX = FloorDiv(cellX - R, CHUNK);
+    const int maxX = FloorDiv(cellX + R, CHUNK);
+    const int minZ = FloorDiv(cellZ - R, CHUNK);
+    const int maxZ = FloorDiv(cellZ + R, CHUNK);
+    const float maxDistance = (float)R * CELL * 1.4142f;
+    for (int cz = minZ; cz <= maxZ; ++cz) for (int cx = minX; cx <= maxX; ++cx) {
+        Chunk& c = GetChunk(cx, cz);
+        if (!c.hasExit || c.exitX < cellX - R || c.exitX > cellX + R || c.exitZ < cellZ - R || c.exitZ > cellZ + R) continue;
         float x = (c.exitX + 0.5f) * CELL, z = (c.exitZ + 0.5f) * CELL;
-        if (hypotf(x - pl.pos.x, z - pl.pos.z) > 28) continue;
+        if (hypotf(x - pl.pos.x, z - pl.pos.z) > maxDistance) continue;
         if (!glow) DrawCube(Wv(x, 0.01f, z), 1.3f, 0.02f, 1.3f, Col(40, 46, 40, LightAt(x, z)));   // сам люк
         else {
             Color g = Col(40, 255, 120, 1);
@@ -171,7 +202,7 @@ static void DrawExit(const Player& pl, bool glow) {
 }
 
 static void DrawLamps(const Player& pl, float flick) {
-    int R = VIEW_R, rx0 = FloorDiv(CellOf(pl.pos.x) - R, 4), rx1 = FloorDiv(CellOf(pl.pos.x) + R, 4);
+    int R = ViewRadiusCells(), rx0 = FloorDiv(CellOf(pl.pos.x) - R, 4), rx1 = FloorDiv(CellOf(pl.pos.x) + R, 4);
     int rz0 = FloorDiv(CellOf(pl.pos.z) - R, 4), rz1 = FloorDiv(CellOf(pl.pos.z) + R, 4);
     rlSetTexture(0);
     for (int rz = rz0; rz <= rz1; rz++) for (int rx = rx0; rx <= rx1; rx++) {
@@ -190,7 +221,7 @@ static float Flicker(float t, float insane) {
     return f;
 }
 
-static void RenderWorld(const Player& pl, float t, float insane, bool entitiesOn) {
+static void RenderWorld(const Player& pl, float t, float insane, bool entitiesOn, bool otherEntitiesEnabled) {
     gOrg = {floorf(pl.pos.x / CELL) * CELL, 0, floorf(pl.pos.z / CELL) * CELL};
     Vector3 eye = EyePos(pl), f = Forward(pl);
     float shake = insane * 0.03f + pl.hurt * 0.05f;
@@ -201,8 +232,10 @@ static void RenderWorld(const Player& pl, float t, float insane, bool entitiesOn
 
     float Lp = LightAt(pl.pos.x, pl.pos.z), flick = Flicker(t, insane);
     float flash = (pl.flash && pl.battery > 0) ? ((pl.battery < 15 && Rand01((int)(t * 14), 3, 98) < 0.35f) ? 0.2f : 1.0f) : 0.0f;
-    float fogD = 0.062f, unlit = 0.0f;
-    Vector3 fogC = {0.30f * (0.1f + 0.9f * Lp), 0.27f * (0.1f + 0.9f * Lp), 0.12f * (0.1f + 0.9f * Lp)};
+    const float viewMeters = (float)ViewRadiusCells() * CELL;
+    // Туман затухает у края выбранного радиуса, но больше не превращает дальние комнаты в чёрный экран.
+    float fogD = 1.15f / (viewMeters * 1.4142f), unlit = 0.0f;
+    Vector3 fogC = {0.20f + 0.10f * Lp, 0.18f + 0.09f * Lp, 0.10f + 0.04f * Lp};
     SetShaderValue(sh, lView, &cam.position, SHADER_UNIFORM_VEC3);
     SetShaderValue(sh, lDir, &f, SHADER_UNIFORM_VEC3);
     SetShaderValue(sh, lFogC, &fogC, SHADER_UNIFORM_VEC3);
@@ -211,17 +244,18 @@ static void RenderWorld(const Player& pl, float t, float insane, bool entitiesOn
     SetShaderValue(sh, lFogD, &fogD, SHADER_UNIFORM_FLOAT);
     SetShaderValue(sh, lUnlit, &unlit, SHADER_UNIFORM_FLOAT);
 
-    rlSetClipPlanes(0.08, 70.0);                    // узкий диапазон - нет z-fighting на 16-бит глубине
+    float farClip = fmaxf(70.0f, viewMeters * 1.7f);
+    rlSetClipPlanes(0.08, farClip);                   // дальняя плоскость следует за радиусом прорисовки
     BeginMode3D(cam);
     rlDisableColorBlend(); rlDisableBackfaceCulling();
     BeginShaderMode(sh);                            // проход 1: освещаемая геометрия
     DrawLevel(pl); DrawExit(pl, false); DrawItems(pl, t, false);
-    if (entitiesOn) EntitiesDraw(pl, false, sh);
+    if (entitiesOn) EntitiesDraw(pl, false, sh, otherEntitiesEnabled);
     EndShaderMode();
     unlit = 1.0f; SetShaderValue(sh, lUnlit, &unlit, SHADER_UNIFORM_FLOAT);
     BeginShaderMode(sh);                            // проход 2: самосветящиеся (лампы, глаза, маячки)
     DrawLamps(pl, flick); DrawExit(pl, true); DrawItems(pl, t, true);
-    if (entitiesOn) EntitiesDraw(pl, true, sh);
+    if (entitiesOn) EntitiesDraw(pl, true, sh, otherEntitiesEnabled);
     EndShaderMode();
     unlit = 0.0f; SetShaderValue(sh, lUnlit, &unlit, SHADER_UNIFORM_FLOAT);
     rlEnableBackfaceCulling();
@@ -276,6 +310,126 @@ static void Overlay(int W, int H, float insane, float hurt) {
     if (hurt > 0) DrawRectangle(0, 0, W, H, Fade(RED, hurt * 0.35f));
 }
 
+static bool HitRect(Rectangle r, Vector2 p) {
+    return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
+}
+
+static Rectangle CenterRect(int W, int H, float centerY, float widthFactor, float heightFactor) {
+    float w = fminf(W * widthFactor, 760.0f), h = fmaxf(46.0f, H * heightFactor);
+    return Rectangle{(W - w) * 0.5f, H * centerY - h * 0.5f, w, h};
+}
+
+static void DrawUiButton(Rectangle r, const char* label, float fs, bool accent = false) {
+    Color fill = accent ? Color{112, 91, 42, 238} : Color{24, 29, 27, 232};
+    Color edge = accent ? Color{255, 220, 120, 235} : Color{185, 190, 174, 185};
+    DrawRectangleRounded(r, 0.16f, 10, fill);
+    DrawRectangleRoundedLinesEx(r, 0.16f, 10, 2.0f, edge);
+    Txt(label, r.x + r.width * 0.5f, r.y + (r.height - fs) * 0.5f, fs, WHITE, 1);
+}
+
+static Rectangle SliderTrack(int W, int H, float centerY) {
+    float w = fminf(W * 0.58f, 620.0f);
+    return Rectangle{(W - w) * 0.5f, H * centerY - 5.0f, w, 10.0f};
+}
+
+static float SliderFraction(Rectangle r, Vector2 p) {
+    return Clamp((p.x - r.x) / r.width, 0.0f, 1.0f);
+}
+
+static void DrawSlider(Rectangle r, float value, float fs, const char* label, const char* valueText) {
+    Txt(label, r.x, r.y - fs * 2.05f, fs, Fade(WHITE, 0.95f));
+    Txt(valueText, r.x + r.width, r.y - fs * 2.05f, fs, Color{255, 224, 140, 255}, 2);
+    DrawRectangleRounded(Rectangle{r.x, r.y, r.width, r.height}, 0.5f, 8, Fade(WHITE, 0.20f));
+    DrawRectangleRounded(Rectangle{r.x, r.y, r.width * Clamp(value, 0, 1), r.height}, 0.5f, 8, Color{198, 164, 83, 255});
+    float kx = r.x + r.width * Clamp(value, 0, 1);
+    DrawCircleV(Vector2{kx, r.y + r.height * 0.5f}, r.height * 1.35f, Color{255, 235, 180, 255});
+    DrawCircleLines((int)kx, (int)(r.y + r.height * 0.5f), r.height * 1.35f, WHITE);
+}
+
+static void DrawSettingsGear(float x, float y, float r) {
+    DrawCircleLines((int)x, (int)y, r * 0.58f, WHITE);
+    DrawCircleLines((int)x, (int)y, r * 0.22f, WHITE);
+    for (int i = 0; i < 8; ++i) {
+        float a = i * PI / 4.0f;
+        Vector2 p1{x + cosf(a) * r * 0.66f, y + sinf(a) * r * 0.66f};
+        Vector2 p2{x + cosf(a) * r, y + sinf(a) * r};
+        DrawLineEx(p1, p2, fmaxf(2.0f, r * 0.16f), WHITE);
+    }
+}
+
+static void DrawMainMenu(int W, int H) {
+    float fs = Clamp(H * 0.052f, 17.0f, 30.0f);
+    Txt(T("BACKROOMS", "ЗАКУЛИСЬЕ"), W * 0.5f, H * 0.16f, fs * 2.0f, Color{242, 218, 142, 255}, 1);
+    Txt(T("LEVEL 0: THE LOBBY", "УРОВЕНЬ 0: ЛОББИ"), W * 0.5f, H * 0.30f, fs * 0.92f, Fade(WHITE, 0.78f), 1);
+    Rectangle level = CenterRect(W, H, 0.53f, 0.64f, 0.13f);
+    Rectangle opts = CenterRect(W, H, 0.70f, 0.64f, 0.13f);
+    DrawUiButton(level, T("SELECT LEVEL", "ВЫБРАТЬ УРОВЕНЬ"), fs * 0.95f, true);
+    DrawUiButton(opts, T("SETTINGS", "НАСТРОЙКИ"), fs * 0.95f, false);
+    DrawSettingsGear(opts.x + opts.width * 0.30f, opts.y + opts.height * 0.5f, fs * 0.55f);
+}
+
+static void DrawLevelSelect(int W, int H) {
+    float fs = Clamp(H * 0.050f, 17.0f, 29.0f);
+    Txt(T("SELECT LEVEL", "ВЫБОР УРОВНЯ"), W * 0.5f, H * 0.16f, fs * 1.65f, Color{242, 218, 142, 255}, 1);
+    Rectangle level = CenterRect(W, H, 0.49f, 0.68f, 0.15f);
+    Rectangle back = CenterRect(W, H, 0.73f, 0.68f, 0.12f);
+    DrawUiButton(level, T("LEVEL 0 - THE LOBBY", "УРОВЕНЬ 0 - ЛОББИ"), fs * 0.9f, true);
+    Txt(T("AVAILABLE", "ДОСТУПЕН"), W * 0.5f, level.y + level.height + fs * 0.35f, fs * 0.62f, Color{160, 220, 160, 255}, 1);
+    DrawUiButton(back, T("BACK", "НАЗАД"), fs * 0.82f, false);
+}
+
+static Rectangle EntitiesToggleRect(int W, int H) {
+    return Rectangle{W * 0.19f, H * 0.43f, W * 0.62f, H * 0.105f};
+}
+
+static void DrawSettings(int W, int H) {
+    float fs = Clamp(H * 0.040f, 15.0f, 23.0f);
+    Rectangle panel{W * 0.08f, H * 0.045f, W * 0.84f, H * 0.91f};
+    DrawRectangleRounded(panel, 0.045f, 12, Fade(Color{9, 13, 13, 255}, 0.94f));
+    DrawRectangleRoundedLinesEx(panel, 0.035f, 12, 2.0f, Fade(Color{220, 198, 130, 255}, 0.72f));
+    Txt(T("SETTINGS", "НАСТРОЙКИ"), W * 0.5f, H * 0.085f, fs * 1.45f, Color{242, 218, 142, 255}, 1);
+
+    char value[48];
+    const char* chunkWord = settings.viewChunks == 1 ? "ЧАНК" : "ЧАНКА";
+    snprintf(value, sizeof value, "%d %s", settings.viewChunks, T("CHUNKS", chunkWord));
+    Rectangle view = SliderTrack(W, H, 0.285f);
+    DrawSlider(view, (settings.viewChunks - VIEW_CHUNKS_MIN) / (float)(VIEW_CHUNKS_MAX - VIEW_CHUNKS_MIN), fs * 0.78f,
+               T("RENDER DISTANCE", "ДАЛЬНОСТЬ ПРОРИСОВКИ"), value);
+
+    Rectangle toggle = EntitiesToggleRect(W, H);
+    DrawRectangleRounded(toggle, 0.15f, 10, Fade(settings.otherEntities ? Color{43, 75, 52, 255} : Color{79, 48, 43, 255}, 0.95f));
+    DrawRectangleRoundedLinesEx(toggle, 0.15f, 10, 2.0f, Fade(WHITE, 0.65f));
+    Txt(T("OTHER ENTITIES", "ОСТАЛЬНЫЕ СУЩНОСТИ"), toggle.x + toggle.width * 0.04f, toggle.y + toggle.height * 0.18f, fs * 0.78f, WHITE);
+    Txt(settings.otherEntities ? T("ON", "ВКЛЮЧЕНЫ") : T("OFF", "ОТКЛЮЧЕНЫ"), toggle.x + toggle.width * 0.96f, toggle.y + toggle.height * 0.18f, fs * 0.78f,
+        settings.otherEntities ? Color{175, 255, 180, 255} : Color{255, 180, 160, 255}, 2);
+    Txt(T("FIZICHKA ALWAYS REMAINS ACTIVE", "ФИЗИЧКА ВСЕГДА ОСТАЁТСЯ АКТИВНОЙ"), W * 0.5f, toggle.y + toggle.height * 0.62f, fs * 0.62f, Fade(WHITE, 0.78f), 1);
+
+    int percent = (int)lroundf(settings.sensitivity / 0.0035f * 100.0f);
+    snprintf(value, sizeof value, "%d%%", percent);
+    Rectangle sens = SliderTrack(W, H, 0.685f);
+    DrawSlider(sens, (settings.sensitivity - SENS_MIN) / (SENS_MAX - SENS_MIN), fs * 0.78f,
+               T("CAMERA SENSITIVITY", "ЧУВСТВИТЕЛЬНОСТЬ КАМЕРЫ"), value);
+
+    Rectangle back = CenterRect(W, H, 0.865f, 0.70f, 0.105f);
+    DrawUiButton(back, T("RETURN TO MAIN MENU", "ВЕРНУТЬСЯ В ГЛАВНОЕ МЕНЮ"), fs * 0.74f, true);
+}
+
+static void LoadSettings() {
+    if (LoadStorageValue(0) != SETTINGS_MAGIC) return;
+    settings.viewChunks = Clamp(LoadStorageValue(1), VIEW_CHUNKS_MIN, VIEW_CHUNKS_MAX);
+    settings.otherEntities = LoadStorageValue(2) != 0;
+    float sens = LoadStorageValue(3) / 1000000.0f;
+    settings.sensitivity = Clamp(sens, SENS_MIN, SENS_MAX);
+}
+
+static void SaveSettings() {
+    SaveStorageValue(0, SETTINGS_MAGIC);
+    SaveStorageValue(1, settings.viewChunks);
+    SaveStorageValue(2, settings.otherEntities ? 1 : 0);
+    SaveStorageValue(3, (int)lroundf(settings.sensitivity * 1000000.0f));
+    settingsDirty = false;
+}
+
 static void NewGame(Player& pl) {
     MapReset((uint32_t)GetRandomValue(1, 1 << 30));
     PlayerInit(pl); EntitiesReset(); gMsgT = 0;
@@ -306,6 +460,7 @@ void GameRun() {
     SetTargetFPS(60);
 
     Player pl; NewGame(pl);
+    LoadSettings();
     float time = 0, stateT = 0, radioT = 3, phantomT = 12, scanT = 0;
     int radioIdx = 0; bool hasExit = false; Vector2 exitPos = {0, 0}; const char* endMsg = "";
 
@@ -317,8 +472,8 @@ void GameRun() {
         if (gMsgT > 0) gMsgT -= dt;
 
         if (state == ST_PLAY) {
-            PlayerUpdate(pl, t, dt);
-            MapUpdate(pl.pos.x, pl.pos.z);
+            PlayerUpdate(pl, t, dt, settings.sensitivity);
+            MapUpdate(pl.pos.x, pl.pos.z, settings.viewChunks + 1);
             float Lp = LightAt(pl.pos.x, pl.pos.z);
 
             if (Item* it = ItemNear(pl.pos.x, pl.pos.z, 0.9f)) {          // подбор предметов
@@ -341,7 +496,7 @@ void GameRun() {
             if (pl.sanity <= 0) pl.health -= 3.0f * dt;
             pl.hurt = fmaxf(0, pl.hurt - dt * 1.5f);
 
-            EntitiesUpdate(pl, dt, insane);
+            EntitiesUpdate(pl, dt, insane, settings.otherEntities);
             if (pl.sanity < 25) {                                           // галлюцинации: далёкие звуки
                 phantomT -= dt;
                 if (phantomT <= 0) { phantomT = Frand(8, 18); Sfx(SFX_HOUND, 0.35f, Frand(0, 1)); }
@@ -363,12 +518,46 @@ void GameRun() {
                 state = ST_DEAD; stateT = 0; Haptic(500);
                 endMsg = pl.sanity <= 0 ? T("YOU LOST YOUR MIND", "ВЫ ПОТЕРЯЛИ РАССУДОК") : T("YOU DIED", "ВЫ ПОГИБЛИ");
             }
-        } else if (state == ST_MENU) {
-            pl.yaw += dt * 0.15f;
-            if (t.anyNew) { NewGame(pl); radioT = 3; radioIdx = 0; state = ST_PLAY; }
+        } else if (state == ST_MENU || state == ST_LEVEL_SELECT || state == ST_SETTINGS) {
+            pl.yaw += dt * 0.035f; // медленный фоновый поворот камеры в меню
+            if (state == ST_MENU && t.tapValid) {
+                Rectangle level = CenterRect(W, H, 0.53f, 0.64f, 0.13f);
+                Rectangle opts = CenterRect(W, H, 0.70f, 0.64f, 0.13f);
+                if (HitRect(level, t.tapPos)) state = ST_LEVEL_SELECT;
+                else if (HitRect(opts, t.tapPos)) state = ST_SETTINGS;
+            } else if (state == ST_LEVEL_SELECT && t.tapValid) {
+                Rectangle level = CenterRect(W, H, 0.49f, 0.68f, 0.15f);
+                Rectangle back = CenterRect(W, H, 0.73f, 0.68f, 0.12f);
+                if (HitRect(level, t.tapPos)) {
+                    NewGame(pl); radioT = 3; radioIdx = 0; state = ST_PLAY;
+                } else if (HitRect(back, t.tapPos)) state = ST_MENU;
+            } else if (state == ST_SETTINGS) {
+                Rectangle toggle = EntitiesToggleRect(W, H);
+                Rectangle back = CenterRect(W, H, 0.865f, 0.70f, 0.105f);
+                Rectangle view = SliderTrack(W, H, 0.285f);
+                Rectangle sens = SliderTrack(W, H, 0.685f);
+                if (t.tapValid && HitRect(toggle, t.tapPos)) {
+                    settings.otherEntities = !settings.otherEntities;
+                    settingsDirty = true;
+                } else if (t.tapValid && HitRect(back, t.tapPos)) {
+                    if (settingsDirty) SaveSettings();
+                    state = ST_MENU;
+                }
+                if (t.pointerDown) {
+                    Rectangle viewHit{view.x - 12, view.y - 28, view.width + 24, 66};
+                    Rectangle sensHit{sens.x - 12, sens.y - 28, sens.width + 24, 66};
+                    if (HitRect(viewHit, t.pointerPos)) {
+                        int v = VIEW_CHUNKS_MIN + (int)lroundf(SliderFraction(view, t.pointerPos) * (VIEW_CHUNKS_MAX - VIEW_CHUNKS_MIN));
+                        if (v != settings.viewChunks) { settings.viewChunks = v; settingsDirty = true; }
+                    } else if (HitRect(sensHit, t.pointerPos)) {
+                        float v = SENS_MIN + SliderFraction(sens, t.pointerPos) * (SENS_MAX - SENS_MIN);
+                        if (fabsf(v - settings.sensitivity) > 0.000015f) { settings.sensitivity = v; settingsDirty = true; }
+                    }
+                } else if (settingsDirty) SaveSettings();
+            }
         } else {                                                            // DEAD / WON
             stateT += dt;
-            if (stateT > 1.5f && t.anyNew) { NewGame(pl); state = ST_MENU; }
+            if (stateT > 1.5f && t.anyNew) { state = ST_MENU; }
         }
 
         float lampVol = state == ST_PLAY ? 0.30f + 0.25f * insane : 0.25f;
@@ -376,25 +565,18 @@ void GameRun() {
 
         BeginDrawing();
         ClearBackground(BLACK);
-        RenderWorld(pl, time, insane, state != ST_MENU);
-        Overlay(W, H, insane, pl.hurt);
+        RenderWorld(pl, time, insane, state == ST_PLAY, settings.otherEntities);
+        Overlay(W, H, state == ST_PLAY ? insane : 0.0f, state == ST_PLAY ? pl.hurt : 0.0f);
         float fs = H * 0.045f;
         if (state == ST_PLAY) DrawHud(pl, t, W, H, hasExit, exitPos);
-        else {
-            DrawRectangle(0, 0, W, H, Fade(BLACK, state == ST_MENU ? 0.62f : 0.78f));
-            if (state == ST_MENU) {
-                Txt(T("BACKROOMS", "ЗАКУЛИСЬЕ"), W / 2.0f, H * 0.10f, fs * 2.2f, Col(235, 215, 90, 1), 1);
-                Txt(T("Level 0 - The Lobby", "Уровень 0 - Лобби"), W / 2.0f, H * 0.28f, fs, Fade(WHITE, 0.8f), 1);
-                const char* L[5] = {
-                    T("Find a floor hatch (green light) to reach Level 1.", "Найдите люк в полу (зелёный свет), чтобы уйти на Уровень 1."),
-                    T("Left: move. Right: look. Buttons: RUN, LIGHT, WATER, MED.", "Слева - движение, справа - обзор. Кнопки: БЕГ, СВЕТ, ВОДА, МЕД."),
-                    T("Hounds hear you run. Walk and hold eye contact.", "Гончие слышат бег. Идите шагом и держите зрительный контакт."),
-                    T("Smilers hate light. Do not stare into the dark.", "Улыбающиеся боятся света. Не смотрите во тьму."),
-                    T("Almond Water restores sanity. Ration it.", "Миндальная вода восстанавливает рассудок. Экономьте.")};
-                for (int i = 0; i < 5; i++) Txt(L[i], W / 2.0f, H * (0.38f + 0.08f * i), fs * 0.8f, Fade(WHITE, 0.85f), 1);
-                Txt(T("TAP TO START", "КОСНИТЕСЬ, ЧТОБЫ НАЧАТЬ"), W / 2.0f, H * 0.84f, fs * 1.1f, Col(255, 240, 120, 1), 1);
-                if (!gRu) Txt("(Cyrillic UI: put a TTF as assets/font.ttf)", W / 2.0f, H * 0.93f, fs * 0.6f, Fade(GRAY, 0.8f), 1);
-            } else if (state == ST_DEAD) {
+        else if (state == ST_MENU || state == ST_LEVEL_SELECT || state == ST_SETTINGS) {
+            DrawRectangle(0, 0, W, H, Fade(BLACK, 0.72f));
+            if (state == ST_MENU) DrawMainMenu(W, H);
+            else if (state == ST_LEVEL_SELECT) DrawLevelSelect(W, H);
+            else DrawSettings(W, H);
+        } else {
+            DrawRectangle(0, 0, W, H, Fade(BLACK, 0.78f));
+            if (state == ST_DEAD) {
                 Txt(endMsg, W / 2.0f, H * 0.38f, fs * 2.0f, Col(220, 40, 40, 1), 1);
                 if (stateT > 1.5f) Txt(T("Tap to return", "Коснитесь, чтобы вернуться"), W / 2.0f, H * 0.62f, fs, Fade(WHITE, 0.8f), 1);
             } else {
@@ -405,6 +587,7 @@ void GameRun() {
         }
         EndDrawing();
     }
+    if (settingsDirty) SaveSettings();
     EntitiesUnload();
     UnloadShader(sh);
     ProcFree(gA);

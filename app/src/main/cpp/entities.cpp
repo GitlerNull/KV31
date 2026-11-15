@@ -362,7 +362,16 @@ void EntitiesThrowBottle(Player& pl) {
     Sfx(SFX_PICK, 0.65f);
 }
 
-void EntitiesUpdate(Player& pl, float dt, float insane) {
+void EntitiesUpdate(Player& pl, float dt, float insane, bool otherEntitiesEnabled) {
+    // При отключении остальных сущностей удаляем их сразу; Физичка и её снаряды остаются.
+    if (!otherEntitiesEnabled) {
+        for (size_t i = 0; i < gE.size();) {
+            if (gE[i].type != E_HOUND) gE.erase(gE.begin() + i);
+            else ++i;
+        }
+        gSpawnT = 25.0f;
+    }
+
     // Полёт снарядов: интегрирование скорости и гравитации, столкновение с полом/стенами.
     for (size_t i=0; i<gFlying.size();) {
         FlyingItem& q = gFlying[i]; q.life -= dt; q.v.y -= 9.81f*dt;
@@ -382,8 +391,10 @@ void EntitiesUpdate(Player& pl, float dt, float insane) {
         }
         if (remove) gFlying.erase(gFlying.begin()+i); else i++;
     }
-    gSpawnT -= dt * (1.0f + insane * 1.5f + (pl.sanity <= 0 ? 2.0f : 0.0f));
-    if (gSpawnT <= 0) { gSpawnT = Frand(10, 20); TrySpawn(pl); }
+    if (otherEntitiesEnabled) {
+        gSpawnT -= dt * (1.0f + insane * 1.5f + (pl.sanity <= 0 ? 2.0f : 0.0f));
+        if (gSpawnT <= 0) { gSpawnT = Frand(10, 20); TrySpawn(pl); }
+    }
     Vector2 pp = {pl.pos.x, pl.pos.z};
     for (size_t i = 0; i < gE.size();) {
         Entity& e = gE[i];
@@ -399,10 +410,11 @@ void EntitiesUpdate(Player& pl, float dt, float insane) {
 static Color C(int r, int g, int b, float L) { L = L < 0 ? 0 : L > 1 ? 1 : L; return Color{(unsigned char)r, (unsigned char)g, (unsigned char)b, (unsigned char)(L * 255)}; }
 static void Beg(const Entity& e) { rlPushMatrix(); rlTranslatef(e.pos.x - gOrg.x, 0, e.pos.y - gOrg.z); rlRotatef(e.yaw * RAD2DEG, 0, 1, 0); }
 
-void EntitiesDraw(const Player& pl, bool glow, Shader worldShader) {
+void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEntitiesEnabled) {
     LoadEntityTextures();
     Vector2 pp = {pl.pos.x, pl.pos.z};
     for (const Entity& e : gE) {
+        if (!otherEntitiesEnabled && e.type != E_HOUND) continue;
         if (Dist(e.pos, pp) > 34) continue;
         float L = LightAt(e.pos.x, e.pos.y);
 

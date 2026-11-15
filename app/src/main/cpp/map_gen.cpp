@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdlib>
+#include <algorithm>
 
 static std::unordered_map<uint64_t, Chunk> gChunks;
 static std::unordered_set<uint64_t> gTaken;   // подобранные предметы (переживают выгрузку чанков)
@@ -143,11 +144,14 @@ float LightAt(float wx, float wz) {
     return 0.07f + 0.93f * l;
 }
 
-void MapUpdate(float px, float pz) {
-    if (gChunks.size() <= 96) return;
+void MapUpdate(float px, float pz, int keepChunks) {
+    // Оставляем радиус прорисовки плюс один буферный чанк для предметов и границ.
+    keepChunks = std::max(2, std::min(6, keepChunks));
+    const size_t maxCached = (size_t)(2 * keepChunks + 1) * (size_t)(2 * keepChunks + 1) + 16;
+    if (gChunks.size() <= maxCached) return;
     int pcx = FloorDiv(CellOf(px), CHUNK), pcz = FloorDiv(CellOf(pz), CHUNK);
     for (auto it = gChunks.begin(); it != gChunks.end();) {
-        if (abs(it->second.x - pcx) > 3 || abs(it->second.z - pcz) > 3) it = gChunks.erase(it); else ++it;
+        if (abs(it->second.x - pcx) > keepChunks || abs(it->second.z - pcz) > keepChunks) it = gChunks.erase(it); else ++it;
     }
     gLast = nullptr;
 }

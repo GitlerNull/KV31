@@ -16,6 +16,6 @@ struct Entity {
 
 void EntitiesReset();
 void EntitiesThrowBottle(Player& pl);
-void EntitiesUpdate(Player& pl, float dt, float insane);   // insane 0..1 - чем ниже рассудок, тем чаще спавн
-void EntitiesDraw(const Player& pl, bool glowPass, Shader worldShader);
+void EntitiesUpdate(Player& pl, float dt, float insane, bool otherEntitiesEnabled); // Физичка не отключается
+void EntitiesDraw(const Player& pl, bool glowPass, Shader worldShader, bool otherEntitiesEnabled);
 void EntitiesUnload();        // glowPass: светящиеся части (глаза, улыбки)

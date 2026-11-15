@@ -4,8 +4,6 @@
 #include "map_gen.h"
 #include <algorithm>
 
-static constexpr float SENS = 0.0035f;   // рад/px
-
 void PlayerInit(Player& p) {
     p = Player{};
     p.pos = {2.5f * CELL, 0, 2.5f * CELL};     // центр стартовой комнаты (клетка 2,2)
@@ -57,8 +55,10 @@ TouchState ReadTouch(int W, int H) {
             else if (p.x < W * 0.5f) { s->role = 1; joyOrigin = p; }
             else s->role = 2;
             t.anyNew = true;
+            if (!t.tapValid) { t.tapValid = true; t.tapPos = p; }
         } else if (s->role == 2) { t.look.x += p.x - s->last.x; t.look.y += p.y - s->last.y; }
         s->last = p; s->alive = true;
+        if (!t.pointerDown) { t.pointerDown = true; t.pointerPos = p; }
         if (s->role == 1) {
             float R = H * 0.15f, dx = p.x - joyOrigin.x, dy = p.y - joyOrigin.y, m = hypotf(dx, dy);
             if (m > R) { dx *= R / m; dy *= R / m; joyOrigin = {p.x - dx, p.y - dy}; }   // плавающий центр
@@ -72,9 +72,10 @@ TouchState ReadTouch(int W, int H) {
     return t;
 }
 
-void PlayerUpdate(Player& p, const TouchState& t, float dt) {
-    p.yaw   -= t.look.x * SENS;
-    p.pitch  = std::clamp(p.pitch - t.look.y * SENS, -1.35f, 1.35f);
+void PlayerUpdate(Player& p, const TouchState& t, float dt, float sensitivity) {
+    const float sens = std::clamp(sensitivity, 0.0010f, 0.0080f);
+    p.yaw   -= t.look.x * sens;
+    p.pitch  = std::clamp(p.pitch - t.look.y * sens, -1.35f, 1.35f);
 
     Vector3 f = {sinf(p.yaw), 0, cosf(p.yaw)}, r = {-f.z, 0, f.x};   // вперёд / вправо
     float jx = t.jx, jy = t.jy, m = hypotf(jx, jy);

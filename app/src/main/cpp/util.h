@@ -30,6 +30,7 @@ inline const char* T(const char* en, const char* ru) { return gRu ? ru : en; }
 
 void Say(const char* msg, float secs = 3.5f);   // субтитр (game.cpp)
 void Haptic(int ms);                            // вибрация через JNI (jni_bridge.cpp)
+unsigned char* LoadSystemFontData(int* size);     // системный шрифт Android с поддержкой кириллицы
 
 enum SfxId { SFX_STEP, SFX_HOUND, SFX_SMILER, SFX_HIT, SFX_PICK, SFX_DRINK, SFX_CINDY, SFX_COUNT };
 void Sfx(SfxId id, float vol = 1.0f, float pan = 0.5f);   // procgen.cpp

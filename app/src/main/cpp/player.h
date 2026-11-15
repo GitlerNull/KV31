@@ -17,11 +17,13 @@ struct TouchState {
     float jx, jy;                     // -1..1
     Vector2 look;                     // сдвиг пальца камеры за кадр, px
     bool sprint, tFlash, tDrink, tMed, tThrow, anyNew;
+    bool tapValid, pointerDown;
+    Vector2 tapPos, pointerPos;
 };
 
 void    PlayerInit(Player& p);
 TouchState ReadTouch(int W, int H);
-void    PlayerUpdate(Player& p, const TouchState& t, float dt);
+void    PlayerUpdate(Player& p, const TouchState& t, float dt, float sensitivity);
 Vector3 EyePos(const Player& p);
 Vector3 Forward(const Player& p);
 // кнопки: 0 бег, 1 фонарик, 2 вода, 3 аптечка, 4 бросок бутылки
