@@ -23,7 +23,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_mopok_dev_backrooms_NativeBridge_nativeInit(JNIEnv* env, jobject, jobject activity, jfloat density, jint sdk) {
+Java_dev_morok_backrooms_NativeBridge_nativeInit(JNIEnv* env, jobject, jobject activity, jfloat density, jint sdk) {
     gDensity = density; gSdk = sdk;
     if (gAct) env->DeleteGlobalRef(gAct);
     gAct = env->NewGlobalRef(activity);

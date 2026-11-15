@@ -21,6 +21,7 @@ bool gRu = false;
 namespace {
 Font gFont;
 ProcAssets gA;
+Texture2D gPortrait{};
 Shader sh;
 int lView, lDir, lFlash, lFlick, lFogD, lFogC, lUnlit;
 char gMsg[128]; float gMsgT = 0;
@@ -143,6 +144,21 @@ static void DrawLevel(const Player& pl) {
         if (!IsSolid(cx, cz + 1)) face(x0, z1, x1, z1, 1.0f);
         if (!IsSolid(cx - 1, cz)) face(x0, z0, x0, z1, 0.85f);
         if (!IsSolid(cx + 1, cz)) face(x1, z0, x1, z1, 0.85f);
+    }
+    // Портрет Физички: внешняя западная сторона стены тайника,
+    // обращённая к стартовой комнате. Дверной проём остаётся свободным.
+    if (gPortrait.id > 0 && IsSolid(4, 1)) {
+        const float px = 4 * CELL - 0.015f;
+        const float z0 = 1 * CELL + 0.20f;
+        const float z1 = 2 * CELL - 0.20f;
+        const float y0 = 0.45f;
+        const float y1 = WALL_H - 0.45f;
+        rlSetTexture(gPortrait.id);
+        Quad(
+            Wv(px, y0, z0), Wv(px, y0, z1),
+            Wv(px, y1, z1), Wv(px, y1, z0),
+            1.0f, 1.0f, 1.0f, 1.0f, white, 1, 1
+        );
     }
     rlSetTexture(0);
 }
@@ -292,7 +308,7 @@ static void DrawHud(const Player& pl, const TouchState& t, int W, int H, bool ha
         DrawCircleV(t.joyP, R * 0.4f, Fade(WHITE, 0.35f));
     } else DrawCircleLines((int)(W * 0.14f), (int)(H * 0.72f), H * 0.15f, Fade(WHITE, 0.18f));
 
-    const char* names[5] = {T("RUN", "БЕГ"), T("LIGHT", "СВЕТ"), T("WATER", "ВОДА"), T("MED", "МЕД"), T("THROW", "БРОСОК")};
+    const char* names[5] = {T("RUN", "БЕГ"), T("LIGHT", "СВЕТ"), T("WATER", "ВОДА"), T("MED", "АПТЕЧКА"), T("THROW", "БРОСОК")};
     for (int i = 0; i < 5; i++) {
         float r; Vector2 c = ButtonCenter(i, W, H, &r);
         bool on = (i == 0 && t.sprint) || (i == 1 && pl.flash);
@@ -453,6 +469,10 @@ static const char* RADIO_RU[] = {
 void GameRun() {
     gRu = LoadUiFont();
     gA = ProcInit();
+    gPortrait = LoadTexture("kv31_wall_portrait.jpg");
+    if (gPortrait.id == 0) {
+        TraceLog(LOG_WARNING, "Portrait texture could not be loaded");
+    }
     sh = LoadShaderFromMemory(VS, FS);
     lView = GetShaderLocation(sh, "viewPos"); lDir = GetShaderLocation(sh, "camDir"); lFlash = GetShaderLocation(sh, "flash");
     lFlick = GetShaderLocation(sh, "flicker"); lFogD = GetShaderLocation(sh, "fogDensity"); lFogC = GetShaderLocation(sh, "fogColor");
@@ -589,6 +609,7 @@ void GameRun() {
     }
     if (settingsDirty) SaveSettings();
     EntitiesUnload();
+    if (gPortrait.id > 0) UnloadTexture(gPortrait);
     UnloadShader(sh);
     ProcFree(gA);
     if (gRu) UnloadFont(gFont);
