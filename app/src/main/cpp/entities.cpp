@@ -14,12 +14,82 @@ static std::vector<FlyingItem> gFlying;
 static Texture2D gWomanFace{};
 static Texture2D gBookTex[4]{};
 static bool gTexturesLoaded = false;
+
+// GLB-модель Гончей
+static Model gHoundModel{};
+static ModelAnimation* gHoundAnimations = nullptr;
+static int gHoundAnimCount = 0;
+static int gHoundIdle = -1;
+static int gHoundWalk = -1;
+static int gHoundRun = -1;
+static bool gHoundLoadAttempted = false;
+
 static void LoadEntityTextures() {
     if (gTexturesLoaded) return;
     gWomanFace = LoadTexture("woman_face.png");
     const char* names[4] = {"book_10.png", "book_9.png", "book_8.png", "book_7.png"};
     for (int i=0;i<4;i++) gBookTex[i] = LoadTexture(names[i]);
     gTexturesLoaded = true;
+}
+
+
+static int FindHoundAnimation(const char* namePart) {
+    if (!gHoundAnimations || !namePart) return -1;
+
+    for (int i = 0; i < gHoundAnimCount; i++) {
+        if (strstr(gHoundAnimations[i].name, namePart)) return i;
+    }
+    return -1;
+}
+
+static bool LoadHoundModel() {
+    if (gHoundLoadAttempted) return gHoundModel.meshCount > 0;
+
+    gHoundLoadAttempted = true;
+
+    gHoundModel = LoadModel("models/hound_woman_rigged.glb");
+
+    if (gHoundModel.meshCount <= 0) {
+        TraceLog(LOG_ERROR, "HOUND: failed to load GLB model");
+        return false;
+    }
+
+    gHoundAnimations = LoadModelAnimations(
+        "models/hound_woman_rigged.glb",
+        &gHoundAnimCount
+    );
+
+    gHoundIdle = FindHoundAnimation("Idle_Breathing");
+    gHoundWalk = FindHoundAnimation("Walk");
+    gHoundRun = FindHoundAnimation("Run");
+
+    TraceLog(LOG_INFO,
+        "HOUND: GLB loaded, animations: %d, idle=%d walk=%d run=%d",
+        gHoundAnimCount, gHoundIdle, gHoundWalk, gHoundRun
+    );
+
+    return true;
+}
+
+static void UpdateHoundAnimation(const Entity& e) {
+    if (!gHoundAnimations || gHoundAnimCount <= 0) return;
+
+    int index = gHoundIdle;
+
+    if (e.st == S_CHASE || e.st == S_ATTACK) {
+        if (gHoundRun >= 0) index = gHoundRun;
+        else if (gHoundWalk >= 0) index = gHoundWalk;
+    } else if (e.st == S_PATROL) {
+        if (gHoundWalk >= 0) index = gHoundWalk;
+    }
+
+    if (index < 0 || index >= gHoundAnimCount) return;
+
+    ModelAnimation anim = gHoundAnimations[index];
+    if (anim.frameCount <= 0) return;
+
+    int frame = (int)(e.t * 60.0f) % anim.frameCount;
+    UpdateModelAnimation(gHoundModel, anim, frame);
 }
 
 static float Frand(float a, float b) { return a + (b - a) * (float)GetRandomValue(0, 10000) / 10000.0f; }
@@ -251,12 +321,64 @@ void EntitiesUpdate(Player& pl, float dt, float insane) {
 static Color C(int r, int g, int b, float L) { L = L < 0 ? 0 : L > 1 ? 1 : L; return Color{(unsigned char)r, (unsigned char)g, (unsigned char)b, (unsigned char)(L * 255)}; }
 static void Beg(const Entity& e) { rlPushMatrix(); rlTranslatef(e.pos.x - gOrg.x, 0, e.pos.y - gOrg.z); rlRotatef(e.yaw * RAD2DEG, 0, 1, 0); }
 
-void EntitiesDraw(const Player& pl, bool glow) {
+void EntitiesDraw(const Player& pl, bool glow, Shader worldShader) {
     LoadEntityTextures();
     Vector2 pp = {pl.pos.x, pl.pos.z};
     for (const Entity& e : gE) {
         if (Dist(e.pos, pp) > 34) continue;
         float L = LightAt(e.pos.x, e.pos.y);
+
+        // Новая модель Hound. Если GLB не загрузился,
+        // ниже автоматически останется старая модель.
+        if (e.type == E_HOUND && LoadHoundModel()) {
+            if (!glow) {
+                UpdateHoundAnimation(e);
+
+                Vector3 modelPos = {
+                    e.pos.x - gOrg.x,
+                    0.0f,
+                    e.pos.y - gOrg.z
+                };
+
+                DrawModelEx(
+                    gHoundModel,
+                    modelPos,
+                    {0.0f, 1.0f, 0.0f},
+                    e.yaw * RAD2DEG,
+                    {0.78f, 0.78f, 0.78f},
+                    WHITE
+                );
+
+                // DrawMesh внутри DrawModelEx напрямую переключает
+                // OpenGL shader. Синхронизируем состояние RLGL.
+                rlSetShader(0, nullptr);
+                rlSetShader(worldShader.id, worldShader.locs);
+            } else {
+                rlPushMatrix();
+                rlTranslatef(
+                    e.pos.x - gOrg.x,
+                    0.0f,
+                    e.pos.y - gOrg.z
+                );
+                rlRotatef(e.yaw * RAD2DEG, 0, 1, 0);
+
+                DrawCube(
+                    {-0.10f, 1.72f, 0.20f},
+                    0.06f, 0.05f, 0.04f,
+                    C(255, 40, 30, 1)
+                );
+                DrawCube(
+                    {0.10f, 1.72f, 0.20f},
+                    0.06f, 0.05f, 0.04f,
+                    C(255, 40, 30, 1)
+                );
+
+                rlPopMatrix();
+            }
+
+            continue;
+        }
+
         Beg(e);
         switch (e.type) {
         case E_HOUND:
@@ -346,4 +468,32 @@ void EntitiesDraw(const Player& pl, bool glow) {
                  Color{55,65,105,255});
         else DrawCube({q.p.x-gOrg.x,q.p.y,q.p.z-gOrg.z},0.42f,0.55f,0.10f,Color{35,48,90,255});
     }
+}
+
+
+void EntitiesUnload() {
+    if (gHoundAnimations) {
+        UnloadModelAnimations(gHoundAnimations, gHoundAnimCount);
+        gHoundAnimations = nullptr;
+        gHoundAnimCount = 0;
+    }
+
+    if (gHoundModel.meshCount > 0) {
+        UnloadModel(gHoundModel);
+        gHoundModel = {};
+    }
+
+    if (gWomanFace.id > 0) UnloadTexture(gWomanFace);
+    gWomanFace = {};
+
+    for (int i = 0; i < 4; i++) {
+        if (gBookTex[i].id > 0) UnloadTexture(gBookTex[i]);
+        gBookTex[i] = {};
+    }
+
+    gTexturesLoaded = false;
+    gHoundLoadAttempted = false;
+    gHoundIdle = -1;
+    gHoundWalk = -1;
+    gHoundRun = -1;
 }

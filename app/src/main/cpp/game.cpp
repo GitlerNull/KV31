@@ -216,12 +216,12 @@ static void RenderWorld(const Player& pl, float t, float insane, bool entitiesOn
     rlDisableColorBlend(); rlDisableBackfaceCulling();
     BeginShaderMode(sh);                            // проход 1: освещаемая геометрия
     DrawLevel(pl); DrawExit(pl, false); DrawItems(pl, t, false);
-    if (entitiesOn) EntitiesDraw(pl, false);
+    if (entitiesOn) EntitiesDraw(pl, false, sh);
     EndShaderMode();
     unlit = 1.0f; SetShaderValue(sh, lUnlit, &unlit, SHADER_UNIFORM_FLOAT);
     BeginShaderMode(sh);                            // проход 2: самосветящиеся (лампы, глаза, маячки)
     DrawLamps(pl, flick); DrawExit(pl, true); DrawItems(pl, t, true);
-    if (entitiesOn) EntitiesDraw(pl, true);
+    if (entitiesOn) EntitiesDraw(pl, true, sh);
     EndShaderMode();
     unlit = 0.0f; SetShaderValue(sh, lUnlit, &unlit, SHADER_UNIFORM_FLOAT);
     rlEnableBackfaceCulling();
@@ -405,6 +405,7 @@ void GameRun() {
         }
         EndDrawing();
     }
+    EntitiesUnload();
     UnloadShader(sh);
     ProcFree(gA);
     if (gRu) UnloadFont(gFont);
