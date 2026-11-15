@@ -217,12 +217,6 @@ static Vector2 HoundRoomPoint() {
     return CellCenter(cx, cz);
 }
 
-static void KeepHoundInRoom(Entity& e) {
-    // Не позволяем центру сущности пересечь стены комнаты.
-    e.pos.x = fmaxf(10.35f, fminf(15.65f, e.pos.x));
-    e.pos.y = fmaxf(2.35f, fminf(7.65f, e.pos.y));
-}
-
 static void Think(Entity& e, Player& pl, float dt) {
     if (e.type == E_HOUND && e.stunT > 0) {
         e.stunT = fmaxf(0, e.stunT - dt); e.yaw += sinf(e.t * 2.7f) * dt * 0.75f;
@@ -234,7 +228,7 @@ static void Think(Entity& e, Player& pl, float dt) {
     switch (e.type) {
     case E_HOUND: {   // женщина-гончая: ползёт на четырёх конечностях и бросает учебники
         e.throwCd -= dt;
-        if (e.st == S_CHASE && HoundRoomContains(pp) && e.throwCd <= 0 && d < 15.0f && d > 3.0f) {
+        if (e.st == S_CHASE && e.throwCd <= 0 && d < 15.0f && d > 3.0f) {
             Vector3 eye = {pl.pos.x, 1.25f, pl.pos.z};
             Vector2 dir = {eye.x - e.pos.x, eye.z - e.pos.y}; float len = hypotf(dir.x,dir.y)+0.001f;
             int bi = GetRandomValue(0,3);
@@ -248,31 +242,28 @@ static void Think(Entity& e, Player& pl, float dt) {
         case S_IDLE:   e.timer -= dt; if (e.timer <= 0) { e.target = HoundRoomPoint(); e.st = S_PATROL; } if (d < hear || eye) alert(); break;
         case S_PATROL: Follow(e, e.target, 2.4f, dt); if (Dist(e.pos, e.target) < 1.2f) { e.st = S_IDLE; e.timer = Frand(1, 3); } if (d < hear || eye) alert(); break;
         case S_CHASE:
-            if (HoundRoomContains(pp)) {
-                Follow(e, pp, eye ? 1.2f : 4.8f, dt);
-            } else {
-                Face(e, pp);
-            }
-            if (d < 1.4f && HoundRoomContains(pp)) {
+            // Преследуем игрока по всей карте, включая выход из комнаты.
+            Follow(e, pp, 4.8f, dt);
+
+            if (d < 1.4f) {
                 e.st = S_ATTACK;
                 e.atkCd = 0.2f;
             }
-            if (d > hear * 1.2f + 6) {
+
+            // Если игрок потерян, возвращаемся в комнату.
+            if (!eye && d > hear * 1.2f + 6) {
                 e.lose += dt;
-                if (e.lose > 5) {
+                if (e.lose > 5.0f) {
                     e.st = S_PATROL;
                     e.target = HoundRoomPoint();
+                    e.lose = 0;
                 }
             } else {
                 e.lose = 0;
             }
             break;
+
         case S_ATTACK:
-            if (!HoundRoomContains(pp)) {
-                e.st = S_CHASE;
-                e.lose = 0;
-                break;
-            }
             e.atkCd -= dt;
             if (e.atkCd <= 0) {
                 if (d < 1.7f) Hurt(pl, 10, 4);
@@ -281,7 +272,6 @@ static void Think(Entity& e, Player& pl, float dt) {
             if (d >= 1.9f) e.st = S_CHASE;
             break;
         }
-        KeepHoundInRoom(e);
     } break;
 
     case E_SMILER: {  // прячется в темноте; боится света; нападает, если на него долго смотреть
@@ -387,9 +377,7 @@ void EntitiesUpdate(Player& pl, float dt, float insane) {
          } else if (!q.bottle &&
                    hypotf(pl.pos.x-q.p.x, pl.pos.z-q.p.z) < 0.48f &&
                    q.p.y > 0.35f && q.p.y < 1.85f) {
-            if (HoundRoomContains({pl.pos.x, pl.pos.z})) {
-                Hurt(pl, 8.0f, 2.0f);
-            }
+            Hurt(pl, 8.0f, 2.0f);
             remove = true;
         }
         if (remove) gFlying.erase(gFlying.begin()+i); else i++;
@@ -401,7 +389,8 @@ void EntitiesUpdate(Player& pl, float dt, float insane) {
         Entity& e = gE[i];
         float d = Dist(e.pos, pp);
         if (!e.persistent) e.life -= dt * (d > 42 ? 4.0f : 1.0f);
-        if (d <= 42) Think(e, pl, dt);                       // дальше не думаем - экономим BFS и генерацию чанков
+        if (d <= 42 || (e.type == E_HOUND && e.persistent))
+            Think(e, pl, dt);
         if (!e.persistent && (e.life <= 0 || d > 55)) gE.erase(gE.begin() + i); else i++;
     }
 }
