@@ -62,7 +62,6 @@ static Texture2D GenWall() {
     const int N = 512;
     Image im = GenImageColor(N, N, WHITE);
     Color* px = (Color*)im.data;
-    const float PI = 3.14159265f;
 
     for (int y = 0; y < N; ++y) for (int x = 0; x < N; ++x) {
         float u = (float)x / N, v = (float)y / N;
