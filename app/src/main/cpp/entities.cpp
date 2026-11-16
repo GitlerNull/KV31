@@ -12,7 +12,7 @@ static float gSpawnT = 25.0f;
 
 // Столкновение игрока только с постоянной Физичкой.
 bool EntitiesCircleHitsPlayer(float x, float z, float playerRadius) {
-    constexpr float HOUND_RADIUS = 0.45f;
+    const float HOUND_RADIUS = HOUND_COLLISION_RADIUS;
     const float minDistance = playerRadius + HOUND_RADIUS;
     const float minDistanceSq = minDistance * minDistance;
 
@@ -297,7 +297,9 @@ static void FollowHound(Entity& e, Vector2 target, float speed, float dt) {
     bool movedAxis = false;
 
     // Не позволяем Физичке проходить сквозь игрока.
-    constexpr float MIN_PLAYER_DISTANCE = 0.45f + 0.30f;
+    constexpr float PLAYER_RADIUS = 0.30f;
+    constexpr float MIN_PLAYER_DISTANCE =
+        HOUND_COLLISION_RADIUS + PLAYER_RADIUS;
     auto CanMoveTo = [&](float x, float z) {
         if (CircleHits(x, z, 0.35f)) return false;
 

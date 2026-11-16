@@ -17,6 +17,8 @@ struct Entity {
 };
 
 // Проверка столкновения игрока с постоянной Физичкой.
+constexpr float HOUND_COLLISION_RADIUS = 0.225f;
+
 bool EntitiesCircleHitsPlayer(float x, float z, float playerRadius);
 
 void EntitiesReset();

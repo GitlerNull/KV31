@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <cstdlib>
 #include <algorithm>
+#include <array>
 
 static std::unordered_map<uint64_t, Chunk> gChunks;
 static std::unordered_set<uint64_t> gTaken;   // подобранные предметы (переживают выгрузку чанков)
@@ -119,16 +120,47 @@ bool LineClear(Vector2 a, Vector2 b) {
     return true;
 }
 
-// Лампа в центре каждой комнаты: целые сектора 5x5 комнат иногда обесточены ("тёмные зоны")
+// Кэш уровней ламп: соседние вершины часто запрашивают одни и те же комнаты.
+struct LampCacheEntry {
+    int rx = 0;
+    int ry = 0;
+    float value = 0.0f;
+    bool valid = false;
+};
+
+static std::array<LampCacheEntry, 4096> gLampCache{};
+
 float LampLevel(int rx, int ry) {
-    if (rx == 1 && ry == 0) return 0.0f; // лампа в комнате с Гончей отсутствует
-    if (rx == 0 && ry == 0) return 1.0f;
-    int sx = FloorDiv(rx, 5), sy = FloorDiv(ry, 5);
-    if (!(sx == 0 && sy == 0) && Rand01(sx, sy, 42) < 0.20f) return 0.0f;
-    float r = Rand01(rx, ry, 41);
-    if (r < 0.10f) return 0.0f;     // перегоревшая лампа
-    if (r < 0.27f) return 0.38f;    // заметно тусклая комната
-    return 1.0f;                    // нормально освещённая комната
+    uint32_t h = (uint32_t)rx * 0x9E3779B1u;
+    h ^= (uint32_t)ry * 0x85EBCA77u;
+    h ^= h >> 16;
+    LampCacheEntry& entry = gLampCache[h & 4095u];
+
+    if (entry.valid && entry.rx == rx && entry.ry == ry)
+        return entry.value;
+
+    float value;
+    if (rx == 1 && ry == 0) {
+        value = 0.0f;
+    } else if (rx == 0 && ry == 0) {
+        value = 1.0f;
+    } else {
+        int sx = FloorDiv(rx, 5), sy = FloorDiv(ry, 5);
+        if (!(sx == 0 && sy == 0) && Rand01(sx, sy, 42) < 0.20f) {
+            value = 0.0f;
+        } else {
+            float r = Rand01(rx, ry, 41);
+            if (r < 0.10f) value = 0.0f;
+            else if (r < 0.27f) value = 0.38f;
+            else value = 1.0f;
+        }
+    }
+
+    entry.rx = rx;
+    entry.ry = ry;
+    entry.value = value;
+    entry.valid = true;
+    return value;
 }
 
 // Билинейная интерполяция яркости четырёх ближайших ламп -> плавные градиенты света и тьмы
@@ -156,7 +188,13 @@ void MapUpdate(float px, float pz, int keepChunks) {
     gLast = nullptr;
 }
 
-void MapReset(uint32_t seed) { gSeed = seed; gChunks.clear(); gTaken.clear(); gLast = nullptr; }
+void MapReset(uint32_t seed) {
+    gSeed = seed;
+    gChunks.clear();
+    gTaken.clear();
+    gLast = nullptr;
+    for (auto& entry : gLampCache) entry.valid = false;
+}
 
 bool IsExitCell(int cx, int cz) {
     int ex, ez;
