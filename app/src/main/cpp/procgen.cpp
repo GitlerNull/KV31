@@ -218,7 +218,40 @@ static void SynthAll() {
 
 ProcAssets ProcInit() {
     ProcAssets a{};
-    a.wall = GenWall(); a.carpet = GenCarpet(); a.ceiling = GenCeil();
+    a.wall = LoadTexture("textures/wallpaper_reference.jpg");
+    if (a.wall.id == 0) {
+        TraceLog(LOG_WARNING, "Wallpaper asset unavailable; using procedural fallback");
+        a.wall = GenWall();
+    } else {
+        GenTextureMipmaps(&a.wall);
+        SetTextureFilter(a.wall, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(a.wall, TEXTURE_WRAP_REPEAT);
+        TraceLog(LOG_INFO, "Wallpaper loaded: %i x %i",
+                 a.wall.width, a.wall.height);
+    }
+
+    a.carpet = LoadTexture("textures/carpet_beige.jpg");
+    if (a.carpet.id == 0) {
+        TraceLog(LOG_WARNING, "Carpet asset unavailable; using procedural fallback");
+        a.carpet = GenCarpet();
+    } else {
+        GenTextureMipmaps(&a.carpet);
+        SetTextureFilter(a.carpet, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(a.carpet, TEXTURE_WRAP_REPEAT);
+        TraceLog(LOG_INFO, "Carpet loaded: %i x %i",
+                 a.carpet.width, a.carpet.height);
+    }
+    a.ceiling = LoadTexture("textures/ceiling_tiles.png");
+    if (a.ceiling.id == 0) {
+        TraceLog(LOG_WARNING, "Ceiling texture unavailable; using procedural fallback");
+        a.ceiling = GenCeil();
+    } else {
+        GenTextureMipmaps(&a.ceiling);
+        SetTextureFilter(a.ceiling, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(a.ceiling, TEXTURE_WRAP_REPEAT);
+        TraceLog(LOG_INFO, "Ceiling texture loaded: %i x %i",
+                 a.ceiling.width, a.ceiling.height);
+    }
     Image v = GenImageGradientRadial(256, 256, 0.35f, Color{0, 0, 0, 0}, Color{0, 0, 0, 255});
     a.vignette = LoadTextureFromImage(v); UnloadImage(v);
     InitAudioDevice(); gAudio = IsAudioDeviceReady();

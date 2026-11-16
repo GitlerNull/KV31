@@ -70,7 +70,7 @@ void main(){
     vec3 c = (unlit > 0.5) ? tex : tex * (light + 0.02);
     float k = d * fogDensity;
     c = mix(c, fogColor, clamp(1.0 - exp(-k*k), 0.0, 1.0));
-    gl_FragColor = vec4(c, texel.a * fragColor.a);
+    gl_FragColor = vec4(c, texel.a);
 }
 )";
 
@@ -149,6 +149,24 @@ static void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, float la, float lb,
     rlEnd();
 }
 
+
+// Отдельный quad с явно заданными UV — для непрерывной мировой раскладки обоев.
+static void QuadUV(Vector3 a, Vector3 b, Vector3 c, Vector3 d,
+                   float la, float lb, float lc, float ld, Color t,
+                   float ua, float va, float ub, float vb,
+                   float uc, float vc, float ud, float vd) {
+    auto q8 = [](float l) {
+        return (unsigned char)(fminf(1.0f, fmaxf(0.0f, l)) * 255);
+    };
+    rlCheckRenderBatchLimit(4);
+    rlBegin(RL_QUADS);
+    rlColor4ub(t.r, t.g, t.b, q8(la)); rlTexCoord2f(ua, va); rlVertex3f(a.x, a.y, a.z);
+    rlColor4ub(t.r, t.g, t.b, q8(lb)); rlTexCoord2f(ub, vb); rlVertex3f(b.x, b.y, b.z);
+    rlColor4ub(t.r, t.g, t.b, q8(lc)); rlTexCoord2f(uc, vc); rlVertex3f(c.x, c.y, c.z);
+    rlColor4ub(t.r, t.g, t.b, q8(ld)); rlTexCoord2f(ud, vd); rlVertex3f(d.x, d.y, d.z);
+    rlEnd();
+}
+
 static int ViewRadiusCells() { return settings.viewChunks * CHUNK; } // один чанк = 16 клеток
 
 static void DrawLevel(const Player& pl) {
@@ -156,29 +174,134 @@ static void DrawLevel(const Player& pl) {
     Color white = {255, 255, 255, 255};
     int bx0 = FloorDiv(pcx - R, 3), bx1 = FloorDiv(pcx + R, 3), bz0 = FloorDiv(pcz - R, 3), bz1 = FloorDiv(pcz + R, 3);
     const float B = 3 * CELL;
-    for (int pass = 0; pass < 2; pass++) {          // 0 - ковёр, 1 - потолок
-        rlSetTexture(pass == 0 ? gA.carpet.id : gA.ceiling.id);
-        float y = pass == 0 ? 0.0f : WALL_H, k = pass == 0 ? 0.9f : 0.8f;
-        for (int bz = bz0; bz <= bz1; bz++) for (int bx = bx0; bx <= bx1; bx++) {
-            float x0 = bx * B, x1 = x0 + B, z0 = bz * B, z1 = z0 + B;
-            float tone = 0.975f + 0.025f * Rand01(bx, bz, pass == 0 ? 91 : 92);
-            Color surfaceTint = {(unsigned char)(255.0f * tone), (unsigned char)(255.0f * tone), (unsigned char)(255.0f * tone), 255};
-            Quad(Wv(x0, y, z0), Wv(x1, y, z0), Wv(x1, y, z1), Wv(x0, y, z1),
-                 LightAt(x0, z0) * k, LightAt(x1, z0) * k, LightAt(x1, z1) * k, LightAt(x0, z1) * k, surfaceTint, 3, 3);
+    // Пол: существующая раскладка ковра без изменений.
+    rlSetTexture(gA.carpet.id);
+    for (int bz = bz0; bz <= bz1; bz++) {
+        for (int bx = bx0; bx <= bx1; bx++) {
+            float x0 = bx * B, x1 = x0 + B;
+            float z0 = bz * B, z1 = z0 + B;
+            float tone = 0.975f + 0.025f * Rand01(bx, bz, 91);
+            Color carpetTint = {
+                (unsigned char)(255.0f * tone),
+                (unsigned char)(255.0f * tone),
+                (unsigned char)(255.0f * tone), 255
+            };
+            Quad(Wv(x0, 0.0f, z0), Wv(x1, 0.0f, z0),
+                 Wv(x1, 0.0f, z1), Wv(x0, 0.0f, z1),
+                 LightAt(x0, z0) * 0.9f, LightAt(x1, z0) * 0.9f,
+                 LightAt(x1, z1) * 0.9f, LightAt(x0, z1) * 0.9f,
+                 carpetTint, 3, 3);
+        }
+    }
+
+    // Потолок: отдельные акустические плиты 60 x 60 см.
+    const float tileSize = 0.60f;
+    const float tileGap = 0.004f;
+    const float ceilingY = WALL_H;
+
+    const float minX = bx0 * B;
+    const float maxX = (bx1 + 1) * B;
+    const float minZ = bz0 * B;
+    const float maxZ = (bz1 + 1) * B;
+
+    const int tileX0 = (int)floorf(minX / tileSize);
+    const int tileX1 = (int)ceilf(maxX / tileSize) - 1;
+    const int tileZ0 = (int)floorf(minZ / tileSize);
+    const int tileZ1 = (int)ceilf(maxZ / tileSize) - 1;
+
+    // Тёмная основа видна только в четырёхмиллиметровых швах.
+    rlSetTexture(0);
+    const Color ceilingBacking = {105, 101, 82, 255};
+    Quad(Wv(minX, ceilingY + 0.002f, minZ),
+         Wv(maxX, ceilingY + 0.002f, minZ),
+         Wv(maxX, ceilingY + 0.002f, maxZ),
+         Wv(minX, ceilingY + 0.002f, maxZ),
+         0.8f, 0.8f, 0.8f, 0.8f, ceilingBacking, 1, 1);
+
+    rlSetTexture(gA.ceiling.id);
+    const Color ceilingTint = {207, 202, 164, 255};
+
+    for (int tz = tileZ0; tz <= tileZ1; ++tz) {
+        for (int tx = tileX0; tx <= tileX1; ++tx) {
+            float x0 = tx * tileSize + tileGap * 0.5f;
+            float x1 = (tx + 1) * tileSize - tileGap * 0.5f;
+            float z0 = tz * tileSize + tileGap * 0.5f;
+            float z1 = (tz + 1) * tileSize - tileGap * 0.5f;
+
+            float la = LightAt(x0, z0) * 0.8f;
+            float lb = LightAt(x1, z0) * 0.8f;
+            float lc = LightAt(x1, z1) * 0.8f;
+            float ld = LightAt(x0, z1) * 0.8f;
+
+            Quad(Wv(x0, ceilingY, z0), Wv(x1, ceilingY, z0),
+                 Wv(x1, ceilingY, z1), Wv(x0, ceilingY, z1),
+                 la, lb, lc, ld, ceilingTint, 1, 1);
         }
     }
     rlSetTexture(gA.wall.id);
     auto face = [&](float xa, float za, float xb, float zb, float shade) {
         float la = LightAt(xa, za) * shade, lb = LightAt(xb, zb) * shade;
-        Quad(Wv(xa, 0, za), Wv(xb, 0, zb), Wv(xb, WALL_H, zb), Wv(xa, WALL_H, za), la, lb, lb * 0.9f, la * 0.9f, white, 1, 1);
+        float ua = (fabsf(xb - xa) >= fabsf(zb - za) ? xa : za) / CELL;
+        float ub = (fabsf(xb - xa) >= fabsf(zb - za) ? xb : zb) / CELL;
+        // Обои 3:4: один тайл занимает 2 м по ширине и 2,667 м по высоте.
+        // Это сохраняет исходные пропорции изображения без растяжения.
+        float vb = -WALL_H / (CELL / 0.75f);
+        QuadUV(Wv(xa, 0, za), Wv(xb, 0, zb),
+               Wv(xb, WALL_H, zb), Wv(xa, WALL_H, za),
+               la, lb, lb * 0.9f, la * 0.9f, white,
+               ua, 0.0f, ub, 0.0f,
+               ub, vb, ua, vb);
     };
+    // Объёмный плинтус с фасеточным округлением верхней кромки.
+    auto baseboard = [&](float xa, float za, float xb, float zb,
+                         float nx, float nz, float shade) {
+        const float profile[][2] = {
+            {0.000f, 0.000f}, {0.045f, 0.000f},
+            {0.045f, 0.034f}, {0.042f, 0.045f},
+            {0.034f, 0.054f}, {0.023f, 0.060f},
+            {0.010f, 0.060f}, {0.000f, 0.052f}
+        };
+        const int count = sizeof(profile) / sizeof(profile[0]);
+        const float lightA = LightAt(xa, za) * shade;
+        const float lightB = LightAt(xb, zb) * shade;
+        const Color material = {112, 101, 83, 255};
+
+        rlSetTexture(0);
+        for (int i = 0; i < count - 1; ++i) {
+            const float da = profile[i][0], ya = profile[i][1];
+            const float db = profile[i + 1][0], yb = profile[i + 1][1];
+
+            Vector3 a = Wv(xa + nx * da, ya, za + nz * da);
+            Vector3 b = Wv(xb + nx * da, ya, zb + nz * da);
+            Vector3 c = Wv(xb + nx * db, yb, zb + nz * db);
+            Vector3 d = Wv(xa + nx * db, yb, za + nz * db);
+
+            Quad(a, b, c, d, lightA, lightB, lightB, lightA,
+                 material, 1.0f, 1.0f);
+        }
+        rlSetTexture(gA.wall.id);
+    };
+
     for (int cz = pcz - R; cz <= pcz + R; cz++) for (int cx = pcx - R; cx <= pcx + R; cx++) {
         if (!IsSolid(cx, cz)) continue;
         float x0 = cx * CELL, x1 = x0 + CELL, z0 = cz * CELL, z1 = z0 + CELL;
-        if (!IsSolid(cx, cz - 1)) face(x0, z0, x1, z0, 1.0f);
-        if (!IsSolid(cx, cz + 1)) face(x0, z1, x1, z1, 1.0f);
-        if (!IsSolid(cx - 1, cz)) face(x0, z0, x0, z1, 0.85f);
-        if (!IsSolid(cx + 1, cz)) face(x1, z0, x1, z1, 0.85f);
+
+        if (!IsSolid(cx, cz - 1)) {
+            face(x0, z0, x1, z0, 1.0f);
+            baseboard(x0, z0, x1, z0, 0.0f, -1.0f, 1.0f);
+        }
+        if (!IsSolid(cx, cz + 1)) {
+            face(x0, z1, x1, z1, 1.0f);
+            baseboard(x0, z1, x1, z1, 0.0f, 1.0f, 1.0f);
+        }
+        if (!IsSolid(cx - 1, cz)) {
+            face(x0, z0, x0, z1, 0.85f);
+            baseboard(x0, z0, x0, z1, -1.0f, 0.0f, 0.85f);
+        }
+        if (!IsSolid(cx + 1, cz)) {
+            face(x1, z0, x1, z1, 0.85f);
+            baseboard(x1, z0, x1, z1, 1.0f, 0.0f, 0.85f);
+        }
     }
     // Портрет Физички: внешняя западная сторона стены тайника,
     // обращённая к стартовой комнате. Дверной проём остаётся свободным.
@@ -267,33 +390,106 @@ static void DrawExit(const Player& pl, bool glow) {
 }
 
 static void DrawLamps(const Player& pl, float flick) {
-    int R = ViewRadiusCells(), rx0 = FloorDiv(CellOf(pl.pos.x) - R, 4), rx1 = FloorDiv(CellOf(pl.pos.x) + R, 4);
-    int rz0 = FloorDiv(CellOf(pl.pos.z) - R, 4), rz1 = FloorDiv(CellOf(pl.pos.z) + R, 4);
+    int R = ViewRadiusCells();
+    int rx0 = FloorDiv(CellOf(pl.pos.x) - R, 4);
+    int rx1 = FloorDiv(CellOf(pl.pos.x) + R, 4);
+    int rz0 = FloorDiv(CellOf(pl.pos.z) - R, 4);
+    int rz1 = FloorDiv(CellOf(pl.pos.z) + R, 4);
+
     rlSetTexture(0);
 
-    // Накладная прямоугольная люминесцентная панель: металлический корпус,
-    // матовый рассеиватель и две светящиеся трубки вместо большого белого квадрата.
-    auto panel = [&](float cx, float cz, float y, float halfX, float halfZ, Color color) {
-        Quad(Wv(cx - halfX, y, cz - halfZ), Wv(cx + halfX, y, cz - halfZ),
-             Wv(cx + halfX, y, cz + halfZ), Wv(cx - halfX, y, cz + halfZ),
+    // Объёмные элементы светильника.
+    // Для основного корпуса нижняя грань отключается, чтобы рассеиватель
+    // и световые трубки были видны снизу.
+    bool omitBottom = false;
+    auto box = [&](float cx, float cy, float cz,
+                   float hx, float hy, float hz, Color color) {
+        float x0 = cx - hx, x1 = cx + hx;
+        float y0 = cy - hy, y1 = cy + hy;
+        float z0 = cz - hz, z1 = cz + hz;
+
+        // Верх и низ
+        Quad(Wv(x0, y1, z0), Wv(x1, y1, z0),
+             Wv(x1, y1, z1), Wv(x0, y1, z1),
+             1, 1, 1, 1, color, 1, 1);
+        if (!omitBottom) {
+            Quad(Wv(x0, y0, z1), Wv(x1, y0, z1),
+                 Wv(x1, y0, z0), Wv(x0, y0, z0),
+                 1, 1, 1, 1, color, 1, 1);
+        }
+
+        // Четыре боковые грани
+        Quad(Wv(x0, y0, z0), Wv(x1, y0, z0),
+             Wv(x1, y1, z0), Wv(x0, y1, z0),
+             1, 1, 1, 1, color, 1, 1);
+        Quad(Wv(x1, y0, z1), Wv(x0, y0, z1),
+             Wv(x0, y1, z1), Wv(x1, y1, z1),
+             1, 1, 1, 1, color, 1, 1);
+        Quad(Wv(x0, y0, z1), Wv(x0, y0, z0),
+             Wv(x0, y1, z0), Wv(x0, y1, z1),
+             1, 1, 1, 1, color, 1, 1);
+        Quad(Wv(x1, y0, z0), Wv(x1, y0, z1),
+             Wv(x1, y1, z1), Wv(x1, y1, z0),
              1, 1, 1, 1, color, 1, 1);
     };
 
-    for (int rz = rz0; rz <= rz1; rz++) for (int rx = rx0; rx <= rx1; rx++) {
-        float lv = LampLevel(rx, rz);
-        if (lv <= 0.01f) continue;
-        float cx = (rx * 4 + 2.5f) * CELL;
-        float cz = (rz * 4 + 2.5f) * CELL;
-        float y = WALL_H - 0.022f;
-        float k = fminf(1.0f, lv * flick);
+    for (int rz = rz0; rz <= rz1; rz++) {
+        for (int rx = rx0; rx <= rx1; rx++) {
+            float lv = LampLevel(rx, rz);
+            if (lv <= 0.01f) continue;
 
-        Color trim = {(unsigned char)(92 * lv), (unsigned char)(88 * lv), (unsigned char)(69 * lv), 255};
-        Color diffuser = {(unsigned char)(178 * k), (unsigned char)(174 * k), (unsigned char)(145 * k), 255};
-        Color tube = {(unsigned char)(255 * k), (unsigned char)(250 * k), (unsigned char)(226 * k), 255};
-        panel(cx, cz, y, 0.70f, 0.39f, trim);
-        panel(cx, cz, y - 0.003f, 0.65f, 0.34f, diffuser);
-        panel(cx, cz - 0.155f, y - 0.006f, 0.55f, 0.045f, tube);
-        panel(cx, cz + 0.155f, y - 0.006f, 0.55f, 0.045f, tube);
+            float cx = (rx * 4 + 2.5f) * CELL;
+            float cz = (rz * 4 + 2.5f) * CELL;
+            float k = fminf(1.0f, lv * flick);
+
+            // Корпус расположен непосредственно в потолке.
+            Color housing = {
+                (unsigned char)(76 * lv),
+                (unsigned char)(73 * lv),
+                (unsigned char)(62 * lv), 255
+            };
+            Color rim = {
+                (unsigned char)(125 * lv),
+                (unsigned char)(119 * lv),
+                (unsigned char)(99 * lv), 255
+            };
+            Color diffuser = {
+                (unsigned char)(155 * k),
+                (unsigned char)(151 * k),
+                (unsigned char)(128 * k), 255
+            };
+            Color tube = {
+                (unsigned char)(255 * k),
+                (unsigned char)(249 * k),
+                (unsigned char)(224 * k), 255
+            };
+
+            // Основной металлический корпус с открытой нижней стороной.
+            omitBottom = true;
+            box(cx, WALL_H - 0.042f, cz,
+                0.70f, 0.040f, 0.39f, housing);
+            omitBottom = false;
+
+            // Нижняя рамка вокруг утопленного рассеивателя.
+            box(cx, WALL_H - 0.078f, cz - 0.355f,
+                0.64f, 0.012f, 0.035f, rim);
+            box(cx, WALL_H - 0.078f, cz + 0.355f,
+                0.64f, 0.012f, 0.035f, rim);
+            box(cx - 0.665f, WALL_H - 0.078f, cz,
+                0.035f, 0.012f, 0.32f, rim);
+            box(cx + 0.665f, WALL_H - 0.078f, cz,
+                0.035f, 0.012f, 0.32f, rim);
+
+            // Матовый рассеиватель находится внутри корпуса.
+            box(cx, WALL_H - 0.078f, cz,
+                0.59f, 0.004f, 0.285f, diffuser);
+
+            // Две отдельные объёмные светящиеся трубки.
+            box(cx, WALL_H - 0.091f, cz - 0.145f,
+                0.51f, 0.006f, 0.025f, tube);
+            box(cx, WALL_H - 0.091f, cz + 0.145f,
+                0.51f, 0.006f, 0.025f, tube);
+        }
     }
 }
 
