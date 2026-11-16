@@ -161,8 +161,10 @@ static void DrawLevel(const Player& pl) {
         float y = pass == 0 ? 0.0f : WALL_H, k = pass == 0 ? 0.9f : 0.8f;
         for (int bz = bz0; bz <= bz1; bz++) for (int bx = bx0; bx <= bx1; bx++) {
             float x0 = bx * B, x1 = x0 + B, z0 = bz * B, z1 = z0 + B;
+            float tone = 0.975f + 0.025f * Rand01(bx, bz, pass == 0 ? 91 : 92);
+            Color surfaceTint = {(unsigned char)(255.0f * tone), (unsigned char)(255.0f * tone), (unsigned char)(255.0f * tone), 255};
             Quad(Wv(x0, y, z0), Wv(x1, y, z0), Wv(x1, y, z1), Wv(x0, y, z1),
-                 LightAt(x0, z0) * k, LightAt(x1, z0) * k, LightAt(x1, z1) * k, LightAt(x0, z1) * k, white, 3, 3);
+                 LightAt(x0, z0) * k, LightAt(x1, z0) * k, LightAt(x1, z1) * k, LightAt(x0, z1) * k, surfaceTint, 3, 3);
         }
     }
     rlSetTexture(gA.wall.id);
@@ -268,13 +270,30 @@ static void DrawLamps(const Player& pl, float flick) {
     int R = ViewRadiusCells(), rx0 = FloorDiv(CellOf(pl.pos.x) - R, 4), rx1 = FloorDiv(CellOf(pl.pos.x) + R, 4);
     int rz0 = FloorDiv(CellOf(pl.pos.z) - R, 4), rz1 = FloorDiv(CellOf(pl.pos.z) + R, 4);
     rlSetTexture(0);
+
+    // Накладная прямоугольная люминесцентная панель: металлический корпус,
+    // матовый рассеиватель и две светящиеся трубки вместо большого белого квадрата.
+    auto panel = [&](float cx, float cz, float y, float halfX, float halfZ, Color color) {
+        Quad(Wv(cx - halfX, y, cz - halfZ), Wv(cx + halfX, y, cz - halfZ),
+             Wv(cx + halfX, y, cz + halfZ), Wv(cx - halfX, y, cz + halfZ),
+             1, 1, 1, 1, color, 1, 1);
+    };
+
     for (int rz = rz0; rz <= rz1; rz++) for (int rx = rx0; rx <= rx1; rx++) {
         float lv = LampLevel(rx, rz);
         if (lv <= 0.01f) continue;
-        float cx = (rx * 4 + 2.5f) * CELL, cz = (rz * 4 + 2.5f) * CELL, h = 0.55f, k = fminf(1.0f, lv * flick);
-        Color c = {(unsigned char)(255 * k), (unsigned char)(250 * k), (unsigned char)(200 * k), 255};
-        float y = WALL_H - 0.02f;
-        Quad(Wv(cx - h, y, cz - h), Wv(cx + h, y, cz - h), Wv(cx + h, y, cz + h), Wv(cx - h, y, cz + h), 1, 1, 1, 1, c, 1, 1);
+        float cx = (rx * 4 + 2.5f) * CELL;
+        float cz = (rz * 4 + 2.5f) * CELL;
+        float y = WALL_H - 0.022f;
+        float k = fminf(1.0f, lv * flick);
+
+        Color trim = {(unsigned char)(92 * lv), (unsigned char)(88 * lv), (unsigned char)(69 * lv), 255};
+        Color diffuser = {(unsigned char)(178 * k), (unsigned char)(174 * k), (unsigned char)(145 * k), 255};
+        Color tube = {(unsigned char)(255 * k), (unsigned char)(250 * k), (unsigned char)(226 * k), 255};
+        panel(cx, cz, y, 0.70f, 0.39f, trim);
+        panel(cx, cz, y - 0.003f, 0.65f, 0.34f, diffuser);
+        panel(cx, cz - 0.155f, y - 0.006f, 0.55f, 0.045f, tube);
+        panel(cx, cz + 0.155f, y - 0.006f, 0.55f, 0.045f, tube);
     }
 }
 

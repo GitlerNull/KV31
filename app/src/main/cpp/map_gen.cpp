@@ -126,9 +126,9 @@ float LampLevel(int rx, int ry) {
     int sx = FloorDiv(rx, 5), sy = FloorDiv(ry, 5);
     if (!(sx == 0 && sy == 0) && Rand01(sx, sy, 42) < 0.20f) return 0.0f;
     float r = Rand01(rx, ry, 41);
-    if (r < 0.08f) return 0.0f;     // перегоревшая
-    if (r < 0.20f) return 0.45f;    // тусклая
-    return 1.0f;
+    if (r < 0.10f) return 0.0f;     // перегоревшая лампа
+    if (r < 0.27f) return 0.38f;    // заметно тусклая комната
+    return 1.0f;                    // нормально освещённая комната
 }
 
 // Билинейная интерполяция яркости четырёх ближайших ламп -> плавные градиенты света и тьмы
