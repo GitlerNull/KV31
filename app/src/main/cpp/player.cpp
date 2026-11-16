@@ -2,6 +2,7 @@
 // В raylib нет GetTouchPointDelta: дельту пальца считаем сами по GetTouchPointId/GetTouchPosition.
 #include "player.h"
 #include "map_gen.h"
+#include "entities.h"
 #include <algorithm>
 
 void PlayerInit(Player& p) {
@@ -84,8 +85,18 @@ void PlayerUpdate(Player& p, const TouchState& t, float dt, float sensitivity) {
     bool run = t.sprint && m > 0.2f && !p.tired && p.stamina > 0;
     float spd = run ? 5.2f : 2.8f;
     float vx = (f.x * -jy + r.x * jx) * spd * dt, vz = (f.z * -jy + r.z * jx) * spd * dt;
-    if (!CircleHits(p.pos.x + vx, p.pos.z, 0.3f)) p.pos.x += vx;      // раздельно по осям - скольжение вдоль стен
-    if (!CircleHits(p.pos.x, p.pos.z + vz, 0.3f)) p.pos.z += vz;
+    // Стены и Физичка блокируют движение игрока независимо по осям.
+    float nextX = p.pos.x + vx;
+    if (!CircleHits(nextX, p.pos.z, 0.3f) &&
+        !EntitiesCircleHitsPlayer(nextX, p.pos.z, 0.3f)) {
+        p.pos.x = nextX;
+    }
+
+    float nextZ = p.pos.z + vz;
+    if (!CircleHits(p.pos.x, nextZ, 0.3f) &&
+        !EntitiesCircleHitsPlayer(p.pos.x, nextZ, 0.3f)) {
+        p.pos.z = nextZ;
+    }
 
     if (run) { p.stamina -= 22 * dt; if (p.stamina <= 0) { p.stamina = 0; p.tired = true; } }
     else { p.stamina = std::min(100.0f, p.stamina + 12 * dt); if (p.tired && p.stamina > 25) p.tired = false; }

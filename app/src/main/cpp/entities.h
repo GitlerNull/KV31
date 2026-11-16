@@ -12,7 +12,12 @@ struct Entity {
     Vector2 target, wp;       // цель патруля / следующая клетка пути
     bool flag;                // Кожекрад: true = уже раскрыт; Синди: true = игрок уже предупреждён
     bool persistent{};        // особая сущность уровня: не удаляется по времени/дистанции
+    Vector2 lastPos{};         // предыдущая позиция Физички
+    float stuckT{};            // время без заметного перемещения
 };
+
+// Проверка столкновения игрока с постоянной Физичкой.
+bool EntitiesCircleHitsPlayer(float x, float z, float playerRadius);
 
 void EntitiesReset();
 void EntitiesThrowBottle(Player& pl);

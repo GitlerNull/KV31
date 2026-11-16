@@ -9,6 +9,27 @@
 
 static std::vector<Entity> gE;
 static float gSpawnT = 25.0f;
+
+// Столкновение игрока только с постоянной Физичкой.
+bool EntitiesCircleHitsPlayer(float x, float z, float playerRadius) {
+    constexpr float HOUND_RADIUS = 0.45f;
+    const float minDistance = playerRadius + HOUND_RADIUS;
+    const float minDistanceSq = minDistance * minDistance;
+
+    for (const Entity& e : gE) {
+        if (e.type != E_HOUND || !e.persistent) continue;
+
+        float dx = x - e.pos.x;
+        float dz = z - e.pos.y;
+
+        if (dx * dx + dz * dz < minDistanceSq) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 struct FlyingItem { Vector3 p, v; float life; bool bottle; int book; };
 static std::vector<FlyingItem> gFlying;
 static Texture2D gWomanFace{};
@@ -47,7 +68,7 @@ static bool LoadHoundModel() {
 
     gHoundLoadAttempted = true;
 
-    gHoundModel = LoadModel("models/hound_woman_rigged.glb");
+    gHoundModel = LoadModel("models/FIZI4KA.glb");
 
 for (int i = 0; i < gHoundModel.materialCount; i++) {
     Material *m = &gHoundModel.materials[i];
@@ -70,7 +91,7 @@ for (int i = 0; i < gHoundModel.materialCount; i++) {
     }
 
     gHoundAnimations = LoadModelAnimations(
-        "models/hound_woman_rigged.glb",
+        "models/FIZI4KA.glb",
         &gHoundAnimCount
     );
 
@@ -82,6 +103,14 @@ for (int i = 0; i < gHoundModel.materialCount; i++) {
         "HOUND: GLB loaded, animations: %d, idle=%d walk=%d run=%d",
         gHoundAnimCount, gHoundIdle, gHoundWalk, gHoundRun
     );
+
+    for (int i = 0; i < gHoundAnimCount; i++) {
+        TraceLog(LOG_INFO,
+            "HOUND ANIM: %s, frames=%d",
+            gHoundAnimations[i].name,
+            gHoundAnimations[i].frameCount
+        );
+    }
 
     return true;
 }
@@ -138,7 +167,14 @@ static bool NextStep(Vector2 from, Vector2 to, Vector2* out) {
             if (abs(nx - sx) > R || abs(nz - sz) > R) continue;
             int ni = idx(nx, nz);
             if (seen[ni] || IsSolid(nx, nz)) continue;
-            seen[ni] = 1; prev[ni] = (int16_t)cur; q[tail++] = (int16_t)ni;
+
+            // Проверяем, помещается ли Физичка в центре следующей клетки.
+            Vector2 candidate = CellCenter(nx, nz);
+            if (CircleHits(candidate.x, candidate.y, 0.35f)) continue;
+
+            seen[ni] = 1;
+            prev[ni] = (int16_t)cur;
+            q[tail++] = (int16_t)ni;
         }
     }
     if (best == start) return false;
@@ -163,6 +199,142 @@ static void Follow(Entity& e, Vector2 target, float speed, float dt) {
     bool direct = Dist(e.pos, target) < 3.0f && LineClear(e.pos, target);
     Move(e, direct ? target : e.wp, speed, dt);
 }
+
+// Отдельное движение Физички: плавный поворот и контроль застревания.
+static void FollowHound(Entity& e, Vector2 target, float speed, float dt) {
+    if (dt <= 0.0f) return;
+
+    float moved = Dist(e.pos, e.lastPos);
+
+    if (moved < 0.015f) {
+        e.stuckT += dt;
+    } else {
+        e.stuckT = 0.0f;
+    }
+
+    e.lastPos = e.pos;
+
+    float distance = Dist(e.pos, target);
+    if (distance < 0.08f) {
+        e.stuckT = 0.0f;
+        return;
+    }
+
+    e.pathT -= dt;
+
+    // Проверяем не только линию, но и свободное место для радиуса модели.
+    bool direct = false;
+    if (distance < 2.4f && LineClear(e.pos, target)) {
+        direct = true;
+        int samples = (int)ceilf(distance / 0.25f);
+
+        for (int i = 1; i <= samples; ++i) {
+            float t = (float)i / (float)samples;
+            float x = e.pos.x + (target.x - e.pos.x) * t;
+            float z = e.pos.y + (target.y - e.pos.y) * t;
+
+            if (CircleHits(x, z, 0.35f)) {
+                direct = false;
+                break;
+            }
+        }
+    }
+
+    // При отсутствии прогресса маршрут пересчитывается раньше обычного.
+    if (e.pathT <= 0.0f || e.stuckT > 0.35f) {
+        e.pathT = 0.22f;
+
+        if (!direct) {
+            Vector2 next{};
+            if (NextStep(e.pos, target, &next)) {
+                e.wp = next;
+            } else {
+                // Не направляем персонажа прямо в стену,
+                // если достижимого следующего шага нет.
+                e.wp = e.pos;
+            }
+        }
+
+        if (e.stuckT > 1.0f) {
+            e.pathT = 0.0f;
+        }
+    }
+
+    Vector2 goal = direct ? target : e.wp;
+    Vector2 delta = {goal.x - e.pos.x, goal.y - e.pos.y};
+    float len = hypotf(delta.x, delta.y);
+
+    if (len < 0.12f) {
+        e.pathT = 0.0f;
+        return;
+    }
+
+    float desiredYaw = atan2f(delta.x, delta.y);
+    float angle = atan2f(
+        sinf(desiredYaw - e.yaw),
+        cosf(desiredYaw - e.yaw)
+    );
+
+    // Максимальная скорость поворота — 160 градусов в секунду.
+    constexpr float TURN_RATE = 2.7925268f;
+    float maxTurn = TURN_RATE * dt;
+    e.yaw += std::clamp(angle, -maxTurn, maxTurn);
+
+    float remainingAngle = atan2f(
+        sinf(desiredYaw - e.yaw),
+        cosf(desiredYaw - e.yaw)
+    );
+
+    // Сначала разворот, затем постепенное ускорение вперёд.
+    float alignment = fmaxf(0.0f, cosf(remainingAngle));
+    float step = fminf(speed * alignment * dt, len);
+
+    if (step < 0.001f) return;
+
+    float nx = e.pos.x + sinf(e.yaw) * step;
+    float nz = e.pos.y + cosf(e.yaw) * step;
+
+    bool movedAxis = false;
+
+    // Не позволяем Физичке проходить сквозь игрока.
+    constexpr float MIN_PLAYER_DISTANCE = 0.45f + 0.30f;
+    auto CanMoveTo = [&](float x, float z) {
+        if (CircleHits(x, z, 0.35f)) return false;
+
+        float currentDx = e.pos.x - target.x;
+        float currentDz = e.pos.y - target.y;
+        float currentDistanceSq =
+            currentDx * currentDx + currentDz * currentDz;
+
+        float dx = x - target.x;
+        float dz = z - target.y;
+        float distanceSq = dx * dx + dz * dz;
+        float minDistanceSq =
+            MIN_PLAYER_DISTANCE * MIN_PLAYER_DISTANCE;
+
+        if (distanceSq < minDistanceSq &&
+            distanceSq <= currentDistanceSq) {
+            return false;
+        }
+
+        return true;
+    };
+
+    if (CanMoveTo(nx, e.pos.y)) {
+        e.pos.x = nx;
+        movedAxis = true;
+    }
+
+    if (CanMoveTo(e.pos.x, nz)) {
+        e.pos.y = nz;
+        movedAxis = true;
+    }
+
+    if (!movedAxis) {
+        e.pathT = 0.0f;
+    }
+}
+
 static void Face(Entity& e, Vector2 p) { e.yaw = atan2f(p.x - e.pos.x, p.y - e.pos.y); }
 
 static bool LookingAt(const Player& pl, Vector2 p, float cosT, float h) {
@@ -243,7 +415,7 @@ static void Think(Entity& e, Player& pl, float dt) {
         case S_PATROL: Follow(e, e.target, 2.4f, dt); if (Dist(e.pos, e.target) < 1.2f) { e.st = S_IDLE; e.timer = Frand(1, 3); } if (d < hear || eye) alert(); break;
         case S_CHASE:
             // Преследуем игрока по всей карте, включая выход из комнаты.
-            Follow(e, pp, 4.8f, dt);
+            FollowHound(e, pp, 4.8f, dt);
 
             if (d < 1.4f) {
                 e.st = S_ATTACK;
@@ -343,6 +515,8 @@ void EntitiesReset() {
     h.type = E_HOUND;
     h.st = S_IDLE;
     h.pos = {13.0f, 5.0f};
+    h.lastPos = h.pos;
+    h.stuckT = 0.0f;
     h.wp = h.pos;
     h.target = h.pos;
     h.yaw = 0.0f;
