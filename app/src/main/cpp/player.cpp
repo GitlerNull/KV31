@@ -25,7 +25,7 @@ Vector3 Forward(const Player& p) {
 Vector2 ButtonCenter(int i, int W, int H, float* radius) {
     float r = i == 5 ? H * 0.055f : H * 0.075f;
     if (radius) *radius = r;
-    if (i == 5) return {W * 0.32f, H * 0.82f};
+    if (i == 5) return {W * 0.55f, H * 0.82f};
     switch (i) {
         case 0:  return {W - 2.2f * r, H - 2.2f * r};   // бег
         case 1:  return {W - 5.0f * r, H - 1.7f * r};   // фонарик

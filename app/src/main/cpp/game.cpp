@@ -589,14 +589,14 @@ static void DrawHud(const Player& pl, const TouchState& t, int W, int H, bool ha
         DrawCircleV(t.joyP, R * 0.4f, Fade(WHITE, 0.35f));
     } else DrawCircleLines((int)(W * 0.14f), (int)(H * 0.72f), H * 0.15f, Fade(WHITE, 0.18f));
 
-    const char* names[5] = {T("RUN", "БЕГ"), T("LIGHT", "СВЕТ"), T("WATER", "ВОДА"), T("MED", "АПТЕЧКА"), T("THROW", "БРОСОК")};
-    for (int i = 0; i < 5; i++) {
+    const char* names[6] = {T("RUN", "БЕГ"), T("LIGHT", "СВЕТ"), T("WATER", "ВОДА"), T("MED", "АПТЕЧКА"), T("THROW", "БРОСОК"), T("CROUCH", "ПРИСЕСТЬ")};
+    for (int i = 0; i < 6; i++) {
         float r; Vector2 c = ButtonCenter(i, W, H, &r);
-        bool on = (i == 0 && t.sprint) || (i == 1 && pl.flash);
+        bool on = (i == 0 && t.sprint) || (i == 1 && pl.flash) || (i == 5 && t.crouch);
         DrawCircleV(c, r, Fade(on ? Col(255, 230, 120, 1) : WHITE, on ? 0.55f : 0.16f));
         DrawCircleLines((int)c.x, (int)c.y, r, Fade(WHITE, 0.55f));
         Txt(names[i], c.x, c.y - fs * 0.55f, fs * 0.8f, WHITE, 1);
-        if (i >= 2) { int count = i == 2 ? pl.water : i == 3 ? pl.meds : pl.emptyBottles; snprintf(buf, sizeof buf, "x%d", count); Txt(buf, c.x, c.y + fs * 0.25f, fs * 0.8f, Fade(WHITE, 0.9f), 1); }
+        if (i >= 2 && i <= 4) { int count = i == 2 ? pl.water : i == 3 ? pl.meds : pl.emptyBottles; snprintf(buf, sizeof buf, "x%d", count); Txt(buf, c.x, c.y + fs * 0.25f, fs * 0.8f, Fade(WHITE, 0.9f), 1); }
     }
     if (gMsgT > 0) {
         Font msgFont = gRu ? gFont : GetFontDefault();

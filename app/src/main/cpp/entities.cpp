@@ -4,6 +4,7 @@
 #include "map_gen.h"
 #include "rlgl.h"
 #include <vector>
+#include <cctype>
 #include <cstring>
 #include <algorithm>
 
@@ -34,9 +35,9 @@ struct FlyingItem {
     Vector3 p{}, v{};
     float life{};
     bool bottle{};
-    int book{-1};
+    int textbook{-1};
     bool settled{};            // учебник лежит на полу и ждёт Физичку
-    bool houndBook{};          // учебник, брошенный именно Физичкой
+    bool houndTextbook{};          // учебник, брошенный именно Физичкой
     bool hitPlayer{};          // попадание учитывается только один раз
     int bounces{};
     float rotation{};          // градусы
@@ -60,21 +61,21 @@ static int gHoundThrowAnimCount = 0;
 static int gHoundThrow = -1;
 static ModelAnimation* gHoundThrowAnimation = nullptr;
 static float gHoundThrowDuration = 0.90f;
-static Model gBookModels[4]{};
-static bool gBookModelLoaded[4]{};
-static bool gBookLoadAttempted = false;
+static Model gTextbookModels[4]{};
+static bool gTextbookModelLoaded[4]{};
+static bool gTextbookLoadAttempted = false;
 
 static constexpr int HOUND_ACTION_NONE = 0;
 static constexpr int HOUND_ACTION_MELEE = 1;
 static constexpr int HOUND_ACTION_THROW = 2;
-static constexpr float BOOK_HELD_SCALE = 1.16f;   // 15.8 x 21.3 x 2.0 см для textbook_10
-static constexpr float BOOK_FLY_SCALE = 1.24f;    // 16.8 x 22.8 x 2.1 см в полёте
+static constexpr float TEXTBOOK_HELD_SCALE = 2.32f;   // Увеличено в 2 раза
+static constexpr float TEXTBOOK_FLY_SCALE = 2.48f;    // Увеличено в 2 раза
 static constexpr float HOUND_MELEE_RANGE = 2.35f;
 static constexpr float HOUND_THROW_MIN_RANGE = 3.00f;
 static constexpr float HOUND_THROW_MAX_RANGE = 13.0f;
-static constexpr float HOUND_BOOK_PICKUP_RANGE = 0.78f;
-static constexpr float HOUND_BOOK_BOOST = 1.20f;
-static constexpr float HOUND_BOOK_BOOST_TIME = 2.0f;
+static constexpr float HOUND_TEXTBOOK_PICKUP_RANGE = 0.78f;
+static constexpr float HOUND_TEXTBOOK_BOOST = 1.20f;
+static constexpr float HOUND_TEXTBOOK_BOOST_TIME = 2.0f;
 
 static void LoadEntityTextures() {
     if (gTexturesLoaded) return;
@@ -83,9 +84,9 @@ static void LoadEntityTextures() {
 }
 
 
-static void LoadBookModels() {
-    if (gBookLoadAttempted) return;
-    gBookLoadAttempted = true;
+static void LoadTextbookModels() {
+    if (gTextbookLoadAttempted) return;
+    gTextbookLoadAttempted = true;
 
     const char* paths[4] = {
         "models/textbook_10.glb",
@@ -95,30 +96,64 @@ static void LoadBookModels() {
     };
     for (int i = 0; i < 4; ++i) {
         if (!FileExists(paths[i])) continue;
-        gBookModels[i] = LoadModel(paths[i]);
-        gBookModelLoaded[i] = gBookModels[i].meshCount > 0;
-        if (!gBookModelLoaded[i])
-            TraceLog(LOG_WARNING, "HOUND BOOK: failed to load %s", paths[i]);
+        gTextbookModels[i] = LoadModel(paths[i]);
+        gTextbookModelLoaded[i] = gTextbookModels[i].meshCount > 0;
+        if (!gTextbookModelLoaded[i])
+            TraceLog(LOG_WARNING, "HOUND textbook: failed to load %s", paths[i]);
         else
-            TraceLog(LOG_INFO, "HOUND BOOK: loaded %s", paths[i]);
+            TraceLog(LOG_INFO, "HOUND textbook: loaded %s", paths[i]);
     }
 
 }
 
-static Model* GetBookModel(int index) {
-    LoadBookModels();
+static int RandomLoadedTextbookIndex() {
+    LoadTextbookModels();
+
+    int available[4];
+    int count = 0;
+
+    for (int i = 0; i < 4; ++i) {
+        if (gTextbookModelLoaded[i])
+            available[count++] = i;
+    }
+
+    if (count == 0) return 0;
+    return available[GetRandomValue(0, count - 1)];
+}
+
+static Model* GetTextbookModel(int index) {
+    LoadTextbookModels();
     if (index < 0 || index >= 4) index = 0;
-    if (gBookModelLoaded[index]) return &gBookModels[index];
+    if (gTextbookModelLoaded[index]) return &gTextbookModels[index];
     for (int i = 0; i < 4; ++i)
-        if (gBookModelLoaded[i]) return &gBookModels[i];
+        if (gTextbookModelLoaded[i]) return &gTextbookModels[i];
     return nullptr;
+}
+
+static bool ContainsIgnoreCase(const char* text, const char* part) {
+    if (!text || !part || !*part) return false;
+
+    for (; *text; ++text) {
+        const char* a = text;
+        const char* b = part;
+
+        while (*a && *b &&
+               tolower((unsigned char)*a) == tolower((unsigned char)*b)) {
+            ++a;
+            ++b;
+        }
+
+        if (!*b) return true;
+    }
+
+    return false;
 }
 
 static int FindHoundAnimation(const char* namePart) {
     if (!gHoundAnimations || !namePart) return -1;
 
     for (int i = 0; i < gHoundAnimCount; i++) {
-        if (strstr(gHoundAnimations[i].name, namePart)) return i;
+        if (ContainsIgnoreCase(gHoundAnimations[i].name, namePart)) return i;
     }
     return -1;
 }
@@ -180,11 +215,11 @@ for (int i = 0; i < gHoundModel.materialCount; i++) {
             "models/FIZI4KA_throw.glb", &gHoundThrowAnimCount
         );
 
-        // Приоритет имени: ThrowBook, затем FIZI4KA_throw, затем Throw.
-        const char* preferredNames[] = {"ThrowBook", "FIZI4KA_throw", "throw"};
+        // Ищем отдельный клип по универсальной части имени.
+        const char* preferredNames[] = {"throwtextbook", "throw"};
         for (const char* preferred : preferredNames) {
             for (int i = 0; gHoundThrowAnimations && i < gHoundThrowAnimCount; ++i) {
-                if (strstr(gHoundThrowAnimations[i].name, preferred) &&
+                if (ContainsIgnoreCase(gHoundThrowAnimations[i].name, preferred) &&
                     gHoundThrowAnimations[i].frameCount > 1 &&
                     SameHoundSkeleton(gHoundThrowAnimations[i])) {
                     gHoundThrow = i;
@@ -198,8 +233,7 @@ for (int i = 0; i < gHoundModel.materialCount; i++) {
 
     // Запасной вариант — анимация из основной модели.
     if (!gHoundThrowAnimation) {
-        gHoundThrow = FindHoundAnimation("ThrowBook");
-        if (gHoundThrow < 0) gHoundThrow = FindHoundAnimation("throw");
+        gHoundThrow = FindHoundAnimation("throw");
 
         if (gHoundThrow >= 0 &&
             gHoundAnimations[gHoundThrow].frameCount > 1) {
@@ -216,7 +250,7 @@ for (int i = 0; i < gHoundModel.materialCount; i++) {
         TraceLog(LOG_WARNING,
                  "HOUND: no compatible throw animation; using fallback timing");
     }
-    LoadBookModels();
+    LoadTextbookModels();
 
     TraceLog(LOG_INFO,
         "HOUND: GLB loaded, animations: %d, idle=%d walk=%d run=%d",
@@ -490,22 +524,25 @@ static float Pan(const Player& pl, Vector2 p) {
 }
 static void Hurt(Player& pl, float dmg, float san) { pl.health -= dmg; pl.sanity -= san; pl.hurt = 1; Haptic(180); Sfx(SFX_HIT, 1.0f); }
 
-static int FindHoundBookProjectile() {
+static int FindHoundTextbookProjectile() {
     for (int i = 0; i < (int)gFlying.size(); ++i) {
-        if (!gFlying[i].bottle && gFlying[i].houndBook &&
-            gFlying[i].book >= 0) return i;
+        if (!gFlying[i].bottle && gFlying[i].houndTextbook &&
+            gFlying[i].textbook >= 0) return i;
     }
     return -1;
 }
 
 static void StartHoundAction(Entity& e, int action) {
+    if (action == HOUND_ACTION_THROW) {
+        e.textbookIndex = RandomLoadedTextbookIndex();
+    }
     e.houndAction = action;
     e.actionT = 0.0f;
     e.actionEvent = false;
     e.st = S_ATTACK;
 }
 
-static void LaunchHoundBook(Entity& e, const Player& pl) {
+static void LaunchHoundTextbook(Entity& e, const Player& pl) {
     const float fx = sinf(e.yaw);
     const float fz = cosf(e.yaw);
     Vector3 start = {e.pos.x + fx * 0.42f, 1.18f, e.pos.y + fz * 0.42f};
@@ -520,24 +557,23 @@ static void LaunchHoundBook(Entity& e, const Player& pl) {
     velocity.z = dz / flightTime;
     velocity.y = (target.y - start.y + 0.5f * gravity * flightTime * flightTime) / flightTime;
 
-    e.bookIndex = GetRandomValue(0, 3);
 
-    FlyingItem book{};
-    book.houndBook = true;
-    book.p = start;
-    book.v = velocity;
-    book.life = 5.0f;
-    book.bottle = false;
-    book.book = e.bookIndex;
-    book.rotation = Frand(-25.0f, 25.0f);
-    book.spin = Frand(420.0f, 620.0f);
-    book.rotationAxis = {0.65f, 0.25f, 0.72f};
-    gFlying.push_back(book);
+    FlyingItem textbook{};
+    textbook.houndTextbook = true;
+    textbook.p = start;
+    textbook.v = velocity;
+    textbook.life = 5.0f;
+    textbook.bottle = false;
+    textbook.textbook = e.textbookIndex;
+    textbook.rotation = Frand(-25.0f, 25.0f);
+    textbook.spin = Frand(420.0f, 620.0f);
+    textbook.rotationAxis = {0.65f, 0.25f, 0.72f};
+    gFlying.push_back(textbook);
 
-    e.bookHeld = false;
+    e.textbookHeld = false;
     // Ускорение начнётся после завершения бросковой анимации,
     // чтобы все 2.0 секунды Физичка действительно бежала к учебнику.
-    e.bookBoostT = 0.0f;
+    e.textbookBoostT = 0.0f;
     e.throwCd = Frand(3.8f, 5.4f);
     Sfx(SFX_HOUND, 0.9f);
 }
@@ -550,9 +586,9 @@ static void UpdateHoundAction(Entity& e, Player& pl, float dt) {
 
     if (!e.actionEvent && e.actionT >= eventTime) {
         e.actionEvent = true;
-        if (action == HOUND_ACTION_THROW && e.bookHeld) {
-            LaunchHoundBook(e, pl);
-        } else if (action == HOUND_ACTION_MELEE && e.bookHeld) {
+        if (action == HOUND_ACTION_THROW && e.textbookHeld) {
+            LaunchHoundTextbook(e, pl);
+        } else if (action == HOUND_ACTION_MELEE && e.textbookHeld) {
             Vector2 pp = {pl.pos.x, pl.pos.z};
             float d = Dist(e.pos, pp);
             if (d <= 2.65f && LineClear(e.pos, pp)) {
@@ -564,8 +600,8 @@ static void UpdateHoundAction(Entity& e, Player& pl, float dt) {
     if (e.actionT >= duration) {
         // Полные две секунды ускорения отсчитываются с момента,
         // когда Физичка закончила бросок и начала возвращаться за книгой.
-        if (action == HOUND_ACTION_THROW && !e.bookHeld)
-            e.bookBoostT = HOUND_BOOK_BOOST_TIME;
+        if (action == HOUND_ACTION_THROW && !e.textbookHeld)
+            e.textbookBoostT = HOUND_TEXTBOOK_BOOST_TIME;
         e.houndAction = HOUND_ACTION_NONE;
         e.actionT = 0.0f;
         e.actionEvent = false;
@@ -573,7 +609,7 @@ static void UpdateHoundAction(Entity& e, Player& pl, float dt) {
     }
 }
 
-static void SettleBook(FlyingItem& q) {
+static void SettleTextbook(FlyingItem& q) {
     q.settled = true;
     q.v = {0.0f, 0.0f, 0.0f};
     q.p.y = 0.011f;
@@ -623,8 +659,8 @@ static Vector2 HoundRoomPoint() {
 }
 
 static void Think(Entity& e, Player& pl, float dt) {
-    if (e.type == E_HOUND && e.bookBoostT > 0.0f)
-        e.bookBoostT = fmaxf(0.0f, e.bookBoostT - dt);
+    if (e.type == E_HOUND && e.textbookBoostT > 0.0f)
+        e.textbookBoostT = fmaxf(0.0f, e.textbookBoostT - dt);
     if (e.type == E_HOUND && e.stunT > 0) {
         e.stunT = fmaxf(0, e.stunT - dt); e.yaw += sinf(e.t * 2.7f) * dt * 0.75f;
         return;
@@ -658,20 +694,20 @@ static void Think(Entity& e, Player& pl, float dt) {
             break;
         case S_CHASE: {
             // После броска Физичка преследует именно лежащий/летящий учебник.
-            if (!e.bookHeld) {
-                int bookAt = FindHoundBookProjectile();
-                if (bookAt < 0) {
-                    e.bookHeld = true;  // страховка, если объект был удалён системой ресурсов
-                    e.bookBoostT = 0.0f;
+            if (!e.textbookHeld) {
+                int textbookAt = FindHoundTextbookProjectile();
+                if (textbookAt < 0) {
+                    e.textbookHeld = true;  // страховка, если объект был удалён системой ресурсов
+                    e.textbookBoostT = 0.0f;
                     break;
                 }
-                FlyingItem& book = gFlying[bookAt];
-                Vector2 bookTarget = {book.p.x, book.p.z};
-                const float speed = 4.8f * (e.bookBoostT > 0.0f ? HOUND_BOOK_BOOST : 1.0f);
-                FollowHound(e, bookTarget, speed, dt);
-                if (book.settled && Dist(e.pos, bookTarget) <= HOUND_BOOK_PICKUP_RANGE) {
-                    gFlying.erase(gFlying.begin() + bookAt);
-                    e.bookHeld = true;
+                FlyingItem& textbook = gFlying[textbookAt];
+                Vector2 textbookTarget = {textbook.p.x, textbook.p.z};
+                const float speed = 4.8f * (e.textbookBoostT > 0.0f ? HOUND_TEXTBOOK_BOOST : 1.0f);
+                FollowHound(e, textbookTarget, speed, dt);
+                if (textbook.settled && Dist(e.pos, textbookTarget) <= HOUND_TEXTBOOK_PICKUP_RANGE) {
+                    gFlying.erase(gFlying.begin() + textbookAt);
+                    e.textbookHeld = true;
                     e.throwCd = fmaxf(e.throwCd, 0.65f);
                     e.pathT = 0.0f;
                     Say(T("The teacher picked up her textbook.", "Физичка подобрала учебник."), 1.5f);
@@ -711,7 +747,7 @@ static void Think(Entity& e, Player& pl, float dt) {
         case S_ATTACK:
             // Сама атака управляется одноразовой анимацией выше.
             if (d > 2.8f) e.st = S_CHASE;
-            else if (e.atkCd <= 0.0f && e.bookHeld) {
+            else if (e.atkCd <= 0.0f && e.textbookHeld) {
                 Face(e, pp);
                 e.atkCd = 1.15f;
                 StartHoundAction(e, HOUND_ACTION_MELEE);
@@ -797,8 +833,8 @@ void EntitiesReset() {
     h.timer = 0.0f;
     h.life = 1000000.0f;
     h.persistent = true;
-    h.bookHeld = true;
-    h.bookIndex = GetRandomValue(0, 3);
+    h.textbookHeld = true;
+    h.textbookIndex = RandomLoadedTextbookIndex();
     h.throwCd = 1.8f;
     gE.push_back(h);
 }
@@ -898,10 +934,10 @@ void EntitiesUpdate(Player& pl, float dt, float insane, bool otherEntitiesEnable
                 q.v.z *= 0.52f;
                 q.bounces++;
             } else {
-                SettleBook(q);
+                SettleTextbook(q);
             }
         } else if (q.life <= 0.0f) {
-            SettleBook(q);
+            SettleTextbook(q);
         }
         ++i;
     }
@@ -954,10 +990,10 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
                 );
 
                 // Пока учебник находится у Физички, рисуем его у правой руки.
-                // Размер textbook_10 при масштабе 0.58 составляет примерно 16 x 21 x 2 см.
-                if (e.bookHeld) {
-                    Model* bookModel = GetBookModel(e.bookIndex);
-                    if (bookModel) {
+                // Масштаб учебника увеличен вдвое относительно исходного.
+                if (e.textbookHeld) {
+                    Model* textbookModel = GetTextbookModel(e.textbookIndex);
+                    if (textbookModel) {
                         const float rightX = cosf(e.yaw);
                         const float rightZ = -sinf(e.yaw);
                         const float frontX = sinf(e.yaw);
@@ -967,8 +1003,8 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
                             1.12f,
                             e.pos.y + rightZ * 0.31f + frontZ * 0.34f - gOrg.z
                         };
-                        DrawModelEx(*bookModel, handPos, {0.0f, 1.0f, 0.0f},
-                                    e.yaw * RAD2DEG, {BOOK_HELD_SCALE, BOOK_HELD_SCALE, BOOK_HELD_SCALE}, WHITE);
+                        DrawModelEx(*textbookModel, handPos, {0.0f, 1.0f, 0.0f},
+                                    e.yaw * RAD2DEG, {TEXTBOOK_HELD_SCALE, TEXTBOOK_HELD_SCALE, TEXTBOOK_HELD_SCALE}, WHITE);
                     }
                 }
 
@@ -1077,11 +1113,11 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
                          0.13f, 0.30f, 0.13f, Color{165, 205, 220, 220});
                 continue;
             }
-            Model* bookModel = GetBookModel(q.book);
+            Model* textbookModel = GetTextbookModel(q.textbook);
             Vector3 pos = {q.p.x - gOrg.x, q.p.y, q.p.z - gOrg.z};
-            if (bookModel) {
-                DrawModelEx(*bookModel, pos, q.rotationAxis, q.rotation,
-                            {BOOK_FLY_SCALE, BOOK_FLY_SCALE, BOOK_FLY_SCALE}, WHITE);
+            if (textbookModel) {
+                DrawModelEx(*textbookModel, pos, q.rotationAxis, q.rotation,
+                            {TEXTBOOK_FLY_SCALE, TEXTBOOK_FLY_SCALE, TEXTBOOK_FLY_SCALE}, WHITE);
                 rlSetShader(0, nullptr);
                 rlSetShader(worldShader.id, worldShader.locs);
             } else {
@@ -1114,13 +1150,13 @@ void EntitiesUnload() {
     gWomanFace = {};
 
     for (int i = 0; i < 4; i++) {
-        if (gBookModelLoaded[i] && gBookModels[i].meshCount > 0)
-            UnloadModel(gBookModels[i]);
-        gBookModels[i] = {};
-        gBookModelLoaded[i] = false;
+        if (gTextbookModelLoaded[i] && gTextbookModels[i].meshCount > 0)
+            UnloadModel(gTextbookModels[i]);
+        gTextbookModels[i] = {};
+        gTextbookModelLoaded[i] = false;
     }
 
-    gBookLoadAttempted = false;
+    gTextbookLoadAttempted = false;
     gHoundThrow = -1;
     gHoundThrowDuration = 0.90f;
     gTexturesLoaded = false;
