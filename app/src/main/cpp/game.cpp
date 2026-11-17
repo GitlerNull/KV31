@@ -307,7 +307,7 @@ static void DrawLevel(const Player& pl, float tanHalfFovX) {
         rlSetTexture(gA.wall.id);
     };
 
-    const float wallCullMargin = 2.5f;
+    const float wallCullMargin = 8.0f;
     for (int cz = pcz - R; cz <= pcz + R; cz++) {
         for (int cx = pcx - R; cx <= pcx + R; cx++) {
             const float centerX = (cx + 0.5f) * CELL;
