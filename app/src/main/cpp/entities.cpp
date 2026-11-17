@@ -68,9 +68,9 @@ static bool gTextbookLoadAttempted = false;
 static constexpr int HOUND_ACTION_NONE = 0;
 static constexpr int HOUND_ACTION_MELEE = 1;
 static constexpr int HOUND_ACTION_THROW = 2;
-static constexpr float TEXTBOOK_HELD_SCALE = 2.32f;   // Увеличено в 2 раза
-static constexpr float TEXTBOOK_FLY_SCALE = 2.48f;    // Увеличено в 2 раза
-static constexpr float HOUND_MELEE_RANGE = 0.55f;
+static constexpr float TEXTBOOK_HELD_SCALE = 0.928f;   // Уменьшен в 2,5 раза
+static constexpr float TEXTBOOK_FLY_SCALE = 0.992f;    // Уменьшен в 2,5 раза
+static constexpr float HOUND_MELEE_RANGE = 0.62f;
 static constexpr float HOUND_THROW_MIN_RANGE = 13.0f;
 static constexpr float HOUND_THROW_MAX_RANGE = 18.0f;
 static constexpr float HOUND_TEXTBOOK_BOOST = 1.20f;
@@ -635,7 +635,7 @@ static void UpdateHoundAction(Entity& e, Player& pl, float dt) {
             Vector2 pp = {pl.pos.x, pl.pos.z};
             float d = Dist(e.pos, pp);
             if (d <= HOUND_MELEE_RANGE && LineClear(e.pos, pp)) {
-                Hurt(pl, 12.0f, 3.0f);
+                Hurt(pl, 24.0f, 3.0f);
             }
         }
     }
@@ -663,8 +663,10 @@ static void TrySpawn(const Player& pl) {
     int r = GetRandomValue(0, 99);
     // На уровне 0 Гончая только одна: особая сущность в тёмной комнате.
     // Остальные вероятности перенормированы без случайного спавна Гончей.
-    EType t = r < 48 ? E_SMILER : r < 84 ? E_STEALER : E_CINDY;
-    if (t == E_CINDY && (cindy || pl.sanity > 65)) t = E_STEALER; // Синди приходит к тем, кому плохо
+    // Диапазон бывшего Кожекрада отключён: он больше не появляется.
+    if (r >= 48 && r < 84) return;
+    EType t = r < 48 ? E_SMILER : E_CINDY;
+    if (t == E_CINDY && (cindy || pl.sanity > 65)) return; // Синди приходит к тем, кому плохо
     if (t != E_CINDY && hostile >= 4) return;
     Vector2 pp = {pl.pos.x, pl.pos.z};
     for (int k = 0; k < 30; k++) {
@@ -730,7 +732,7 @@ static void Think(Entity& e, Player& pl, float dt) {
             e.houndVelocity = {0.0f, 0.0f};
         }
 
-        float hear = pl.crouching ? 0.0f : pl.noise * 20.0f;
+        float hear = pl.crouching ? 0.0f : std::min(20.0f, pl.noise * 36.0f);
         bool eye = d < 9 && d > 1.5f && LookingAt(pl, e.pos, 0.93f, 0.7f) && LineClear(pp, e.pos);
         auto alert = [&] { e.st = S_CHASE; e.lose = 0; Sfx(SFX_HOUND, Vol(d), Pan(pl, e.pos)); };
         switch (e.st) {
@@ -947,7 +949,7 @@ void EntitiesUpdate(Player& pl, float dt, float insane, bool otherEntitiesEnable
             if (!q.hitPlayer && candidate.y >= 0.35f && candidate.y <= 1.90f &&
                 hypotf(pl.pos.x - candidate.x, pl.pos.z - candidate.z) <= 0.48f) {
                 q.hitPlayer = true;
-                Hurt(pl, 10.0f, 2.5f);   // гарантированный урон один раз за попадание
+                Hurt(pl, 20.0f, 2.5f);   // гарантированный урон один раз за попадание
                 q.v.x *= 0.22f;
                 q.v.z *= 0.22f;
                 q.v.y = fminf(q.v.y, -2.8f);
@@ -1023,7 +1025,7 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
                 );
 
                 // Пока учебник находится у Физички, рисуем его у правой руки.
-                // Масштаб учебника увеличен вдвое относительно исходного.
+                // Масштаб учебника уменьшен в 2,5 раза относительно прежнего.
                 if (e.textbookHeld) {
                     Model* textbookModel = GetTextbookModel(e.textbookIndex);
                     if (textbookModel) {
@@ -1032,9 +1034,9 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
                         const float frontX = sinf(e.yaw);
                         const float frontZ = cosf(e.yaw);
                         Vector3 handPos = {
-                            e.pos.x + rightX * 0.31f + frontX * 0.34f - gOrg.x,
+                            e.pos.x - rightX * 0.31f + frontX * 0.34f - gOrg.x,
                             1.12f,
-                            e.pos.y + rightZ * 0.31f + frontZ * 0.34f - gOrg.z
+                            e.pos.y - rightZ * 0.31f + frontZ * 0.34f - gOrg.z
                         };
                         DrawModelEx(*textbookModel, handPos, {0.0f, 1.0f, 0.0f},
                                     e.yaw * RAD2DEG, {TEXTBOOK_HELD_SCALE, TEXTBOOK_HELD_SCALE, TEXTBOOK_HELD_SCALE}, WHITE);
