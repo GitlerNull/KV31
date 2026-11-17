@@ -45,7 +45,6 @@ struct FlyingItem {
 };
 static std::vector<FlyingItem> gFlying;
 static Texture2D gWomanFace{};
-static Texture2D gBookTex[4]{};
 static bool gTexturesLoaded = false;
 
 // GLB-модель Гончей
@@ -68,8 +67,8 @@ static bool gBookLoadAttempted = false;
 static constexpr int HOUND_ACTION_NONE = 0;
 static constexpr int HOUND_ACTION_MELEE = 1;
 static constexpr int HOUND_ACTION_THROW = 2;
-static constexpr float BOOK_HELD_SCALE = 0.58f;   // 15.8 x 21.3 x 2.0 см для textbook_10
-static constexpr float BOOK_FLY_SCALE = 0.62f;    // 16.8 x 22.8 x 2.1 см в полёте
+static constexpr float BOOK_HELD_SCALE = 1.16f;   // 15.8 x 21.3 x 2.0 см для textbook_10
+static constexpr float BOOK_FLY_SCALE = 1.24f;    // 16.8 x 22.8 x 2.1 см в полёте
 static constexpr float HOUND_MELEE_RANGE = 2.35f;
 static constexpr float HOUND_THROW_MIN_RANGE = 3.00f;
 static constexpr float HOUND_THROW_MAX_RANGE = 13.0f;
@@ -80,8 +79,6 @@ static constexpr float HOUND_BOOK_BOOST_TIME = 2.0f;
 static void LoadEntityTextures() {
     if (gTexturesLoaded) return;
     gWomanFace = LoadTexture("woman_face.png");
-    const char* names[4] = {"book_10.png", "book_9.png", "book_8.png", "book_7.png"};
-    for (int i=0;i<4;i++) gBookTex[i] = LoadTexture(names[i]);
     gTexturesLoaded = true;
 }
 
@@ -153,6 +150,18 @@ for (int i = 0; i < gHoundModel.materialCount; i++) {
     if (gHoundModel.meshCount <= 0) {
         TraceLog(LOG_ERROR, "HOUND: failed to load GLB model");
         return false;
+    }
+
+    // Диагностика скелета Физички.
+    TraceLog(LOG_INFO, "HOUND BONES: count=%d", gHoundModel.boneCount);
+
+    for (int i = 0; i < gHoundModel.boneCount; ++i) {
+        TraceLog(LOG_INFO,
+            "HOUND BONE: index=%d name=%s parent=%d",
+            i,
+            gHoundModel.bones[i].name,
+            gHoundModel.bones[i].parent
+        );
     }
 
     gHoundAnimations = LoadModelAnimations(
@@ -243,7 +252,7 @@ static float HoundActionDuration() {
 static void UpdateHoundAnimation(const Entity& e) {
     // Одноразовая атака должна работать и тогда, когда бросковый клип
     // загружен отдельным GLB, даже если набор базовых клипов пуст.
-    if (e.houndAction != HOUND_ACTION_NONE && gHoundThrowAnimation &&
+    if (e.houndAction == HOUND_ACTION_THROW && gHoundThrowAnimation &&
         SameHoundSkeleton(*gHoundThrowAnimation) && gHoundThrowAnimation->frameCount > 0) {
         int frame = std::clamp((int)(e.actionT / 0.017f), 0, gHoundThrowAnimation->frameCount - 1);
         UpdateModelAnimation(gHoundModel, *gHoundThrowAnimation, frame);
@@ -633,7 +642,7 @@ static void Think(Entity& e, Player& pl, float dt) {
             break;
         }
 
-        float hear = pl.noise * 20.0f;
+        float hear = pl.crouching ? 0.0f : pl.noise * 20.0f;
         bool eye = d < 9 && d > 1.5f && LookingAt(pl, e.pos, 0.93f, 0.7f) && LineClear(pp, e.pos);
         auto alert = [&] { e.st = S_CHASE; e.lose = 0; Sfx(SFX_HOUND, Vol(d), Pan(pl, e.pos)); };
         switch (e.st) {
@@ -687,7 +696,7 @@ static void Think(Entity& e, Player& pl, float dt) {
             }
 
             // Если игрок потерян, возвращаемся в комнату.
-            if (!eye && d > hear * 1.2f + 6) {
+            if (!eye && (pl.crouching || d > hear * 1.2f + 6)) {
                 e.lose += dt;
                 if (e.lose > 5.0f) {
                     e.st = S_PATROL;
@@ -1105,8 +1114,6 @@ void EntitiesUnload() {
     gWomanFace = {};
 
     for (int i = 0; i < 4; i++) {
-        if (gBookTex[i].id > 0) UnloadTexture(gBookTex[i]);
-        gBookTex[i] = {};
         if (gBookModelLoaded[i] && gBookModels[i].meshCount > 0)
             UnloadModel(gBookModels[i]);
         gBookModels[i] = {};
