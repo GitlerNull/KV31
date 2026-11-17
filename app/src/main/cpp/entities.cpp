@@ -72,8 +72,8 @@ static constexpr float TEXTBOOK_HELD_SCALE = 2.32f;   // Увеличено в 2
 static constexpr float TEXTBOOK_FLY_SCALE = 2.48f;    // Увеличено в 2 раза
 static constexpr float HOUND_MELEE_RANGE = 2.35f;
 static constexpr float HOUND_THROW_MIN_RANGE = 3.00f;
-static constexpr float HOUND_THROW_MAX_RANGE = 13.0f;
-static constexpr float HOUND_TEXTBOOK_PICKUP_RANGE = 0.78f;
+static constexpr float HOUND_THROW_MAX_RANGE = 18.0f;
+static constexpr float HOUND_TEXTBOOK_PICKUP_RANGE = 1.35f;
 static constexpr float HOUND_TEXTBOOK_BOOST = 1.20f;
 static constexpr float HOUND_TEXTBOOK_BOOST_TIME = 2.0f;
 
@@ -374,7 +374,7 @@ static void Follow(Entity& e, Vector2 target, float speed, float dt) {
 }
 
 // Отдельное движение Физички: плавный поворот и контроль застревания.
-static void FollowHound(Entity& e, Vector2 target, float speed, float dt) {
+static void FollowHound(Entity& e, Vector2 target, float speed, float dt, bool avoidPlayer = true) {
     if (dt <= 0.0f) return;
 
     float moved = Dist(e.pos, e.lastPos);
@@ -388,15 +388,17 @@ static void FollowHound(Entity& e, Vector2 target, float speed, float dt) {
     e.lastPos = e.pos;
 
     float distance = Dist(e.pos, target);
+
     if (distance < 0.08f) {
         e.stuckT = 0.0f;
+        e.houndVelocity = {0.0f, 0.0f};
         return;
     }
 
     e.pathT -= dt;
 
-    // Проверяем не только линию, но и свободное место для радиуса модели.
     bool direct = false;
+
     if (distance < 2.4f && LineClear(e.pos, target)) {
         direct = true;
         int samples = (int)ceilf(distance / 0.25f);
@@ -413,17 +415,15 @@ static void FollowHound(Entity& e, Vector2 target, float speed, float dt) {
         }
     }
 
-    // При отсутствии прогресса маршрут пересчитывается раньше обычного.
     if (e.pathT <= 0.0f || e.stuckT > 0.35f) {
         e.pathT = 0.22f;
 
         if (!direct) {
             Vector2 next{};
+
             if (NextStep(e.pos, target, &next)) {
                 e.wp = next;
             } else {
-                // Не направляем персонажа прямо в стену,
-                // если достижимого следующего шага нет.
                 e.wp = e.pos;
             }
         }
@@ -439,6 +439,8 @@ static void FollowHound(Entity& e, Vector2 target, float speed, float dt) {
 
     if (len < 0.12f) {
         e.pathT = 0.0f;
+        e.houndVelocity.x *= expf(-10.0f * dt);
+        e.houndVelocity.y *= expf(-10.0f * dt);
         return;
     }
 
@@ -448,7 +450,6 @@ static void FollowHound(Entity& e, Vector2 target, float speed, float dt) {
         cosf(desiredYaw - e.yaw)
     );
 
-    // Максимальная скорость поворота — 160 градусов в секунду.
     constexpr float TURN_RATE = 2.7925268f;
     float maxTurn = TURN_RATE * dt;
     e.yaw += std::clamp(angle, -maxTurn, maxTurn);
@@ -458,54 +459,81 @@ static void FollowHound(Entity& e, Vector2 target, float speed, float dt) {
         cosf(desiredYaw - e.yaw)
     );
 
-    // Сначала разворот, затем постепенное ускорение вперёд.
     float alignment = fmaxf(0.0f, cosf(remainingAngle));
-    float step = fminf(speed * alignment * dt, len);
 
-    if (step < 0.001f) return;
+    // Скорость плавно уменьшается возле точки назначения.
+    float targetSpeed = fminf(speed, len * 2.0f) * alignment;
 
-    float nx = e.pos.x + sinf(e.yaw) * step;
-    float nz = e.pos.y + cosf(e.yaw) * step;
+    Vector2 desiredVelocity = {
+        sinf(e.yaw) * targetSpeed,
+        cosf(e.yaw) * targetSpeed
+    };
 
-    bool movedAxis = false;
+    // Постепенно изменяем текущую скорость к требуемой.
+    float acceleration = 9.0f;
+    float braking = 11.0f;
 
-    // Не позволяем Физичке проходить сквозь игрока.
+    float vx = desiredVelocity.x - e.houndVelocity.x;
+    float vz = desiredVelocity.y - e.houndVelocity.y;
+    float velocityDifference = hypotf(vx, vz);
+
+    float maxChange = (targetSpeed < 0.05f ? braking : acceleration) * dt;
+
+    if (velocityDifference > maxChange && velocityDifference > 0.0001f) {
+        float scale = maxChange / velocityDifference;
+        vx *= scale;
+        vz *= scale;
+    }
+
+    e.houndVelocity.x += vx;
+    e.houndVelocity.y += vz;
+
     constexpr float PLAYER_RADIUS = 0.30f;
     constexpr float MIN_PLAYER_DISTANCE =
         HOUND_COLLISION_RADIUS + PLAYER_RADIUS;
+
+    float nx = e.pos.x + e.houndVelocity.x * dt;
+    float nz = e.pos.y + e.houndVelocity.y * dt;
+
     auto CanMoveTo = [&](float x, float z) {
         if (CircleHits(x, z, 0.35f)) return false;
 
-        float currentDx = e.pos.x - target.x;
-        float currentDz = e.pos.y - target.y;
-        float currentDistanceSq =
-            currentDx * currentDx + currentDz * currentDz;
+        if (avoidPlayer) {
+            float currentDx = e.pos.x - target.x;
+            float currentDz = e.pos.y - target.y;
+            float currentDistanceSq =
+                currentDx * currentDx + currentDz * currentDz;
 
-        float dx = x - target.x;
-        float dz = z - target.y;
-        float distanceSq = dx * dx + dz * dz;
-        float minDistanceSq =
-            MIN_PLAYER_DISTANCE * MIN_PLAYER_DISTANCE;
+            float dx = x - target.x;
+            float dz = z - target.y;
+            float distanceSq = dx * dx + dz * dz;
+            float minDistanceSq =
+                MIN_PLAYER_DISTANCE * MIN_PLAYER_DISTANCE;
 
-        if (distanceSq < minDistanceSq &&
-            distanceSq <= currentDistanceSq) {
-            return false;
+            if (distanceSq < minDistanceSq &&
+                distanceSq <= currentDistanceSq) {
+                return false;
+            }
         }
 
         return true;
     };
 
-    if (CanMoveTo(nx, e.pos.y)) {
+    bool movedX = CanMoveTo(nx, e.pos.y);
+    if (movedX) {
         e.pos.x = nx;
-        movedAxis = true;
+    } else {
+        e.houndVelocity.x = 0.0f;
     }
 
-    if (CanMoveTo(e.pos.x, nz)) {
+    bool movedZ = CanMoveTo(e.pos.x, nz);
+    if (movedZ) {
         e.pos.y = nz;
-        movedAxis = true;
+    } else {
+        e.houndVelocity.y = 0.0f;
     }
 
-    if (!movedAxis) {
+    if (!movedX && !movedZ) {
         e.pathT = 0.0f;
     }
 }
@@ -591,7 +619,7 @@ static void UpdateHoundAction(Entity& e, Player& pl, float dt) {
         } else if (action == HOUND_ACTION_MELEE && e.textbookHeld) {
             Vector2 pp = {pl.pos.x, pl.pos.z};
             float d = Dist(e.pos, pp);
-            if (d <= 2.65f && LineClear(e.pos, pp)) {
+            if (d <= HOUND_MELEE_RANGE && LineClear(e.pos, pp)) {
                 Hurt(pl, 12.0f, 3.0f);
             }
         }
@@ -662,7 +690,9 @@ static void Think(Entity& e, Player& pl, float dt) {
     if (e.type == E_HOUND && e.textbookBoostT > 0.0f)
         e.textbookBoostT = fmaxf(0.0f, e.textbookBoostT - dt);
     if (e.type == E_HOUND && e.stunT > 0) {
-        e.stunT = fmaxf(0, e.stunT - dt); e.yaw += sinf(e.t * 2.7f) * dt * 0.75f;
+        e.houndVelocity = {0.0f, 0.0f};
+        e.stunT = fmaxf(0, e.stunT - dt);
+        e.yaw += sinf(e.t * 2.7f) * dt * 0.75f;
         return;
     }
     Vector2 pp = {pl.pos.x, pl.pos.z};
@@ -674,8 +704,13 @@ static void Think(Entity& e, Player& pl, float dt) {
         e.atkCd = fmaxf(0.0f, e.atkCd - dt);
 
         if (e.houndAction != HOUND_ACTION_NONE) {
+            e.houndVelocity = {0.0f, 0.0f};
             UpdateHoundAction(e, pl, dt);
             break;
+        }
+
+        if (e.st != S_CHASE) {
+            e.houndVelocity = {0.0f, 0.0f};
         }
 
         float hear = pl.crouching ? 0.0f : pl.noise * 20.0f;
@@ -704,13 +739,20 @@ static void Think(Entity& e, Player& pl, float dt) {
                 FlyingItem& textbook = gFlying[textbookAt];
                 Vector2 textbookTarget = {textbook.p.x, textbook.p.z};
                 const float speed = 4.8f * (e.textbookBoostT > 0.0f ? HOUND_TEXTBOOK_BOOST : 1.0f);
-                FollowHound(e, textbookTarget, speed, dt);
-                if (textbook.settled && Dist(e.pos, textbookTarget) <= HOUND_TEXTBOOK_PICKUP_RANGE) {
+
+                // Сначала проверяем возможность подобрать лежащий учебник.
+                const bool canPickup =
+                    textbook.settled &&
+                    Dist(e.pos, textbookTarget) <= HOUND_TEXTBOOK_PICKUP_RANGE;
+
+                if (canPickup) {
                     gFlying.erase(gFlying.begin() + textbookAt);
                     e.textbookHeld = true;
                     e.throwCd = fmaxf(e.throwCd, 0.65f);
                     e.pathT = 0.0f;
                     Say(T("The teacher picked up her textbook.", "Физичка подобрала учебник."), 1.5f);
+                } else {
+                    FollowHound(e, textbookTarget, speed, dt, false);
                 }
                 break;
             }
@@ -723,7 +765,9 @@ static void Think(Entity& e, Player& pl, float dt) {
                 } else {
                     FollowHound(e, pp, 4.8f, dt);
                 }
-            } else if (d >= HOUND_THROW_MIN_RANGE && d <= HOUND_THROW_MAX_RANGE &&
+            } else if (e.textbookHeld &&
+                       d >= HOUND_THROW_MIN_RANGE &&
+                       d <= HOUND_THROW_MAX_RANGE &&
                        e.throwCd <= 0.0f && LineClear(e.pos, pp)) {
                 Face(e, pp);
                 StartHoundAction(e, HOUND_ACTION_THROW);
@@ -745,9 +789,10 @@ static void Think(Entity& e, Player& pl, float dt) {
             break;
         }
         case S_ATTACK:
-            // Сама атака управляется одноразовой анимацией выше.
-            if (d > 2.8f) e.st = S_CHASE;
-            else if (e.atkCd <= 0.0f && e.textbookHeld) {
+            // Ближняя атака разрешена только в пределах заданного радиуса.
+            if (d > HOUND_MELEE_RANGE) {
+                e.st = S_CHASE;
+            } else if (e.atkCd <= 0.0f && e.textbookHeld) {
                 Face(e, pp);
                 e.atkCd = 1.15f;
                 StartHoundAction(e, HOUND_ACTION_MELEE);
