@@ -200,7 +200,7 @@ for (int i = 0; i < gHoundModel.materialCount; i++) {
 
     if (gHoundThrowAnimation) {
         gHoundThrowDuration =
-            (float)(gHoundThrowAnimation->frameCount - 1) / 30.0f;
+            (float)(gHoundThrowAnimation->frameCount - 1) * 0.017f;
         TraceLog(LOG_INFO, "HOUND: throw animation loaded, duration %.3f s",
                  gHoundThrowDuration);
     } else {
@@ -236,7 +236,7 @@ static bool SameHoundSkeleton(const ModelAnimation& anim) {
 
 static float HoundActionDuration() {
     if (gHoundThrowAnimation && gHoundThrowAnimation->frameCount > 1)
-        return (float)(gHoundThrowAnimation->frameCount - 1) / 30.0f;
+        return (float)(gHoundThrowAnimation->frameCount - 1) * 0.017f;
     return gHoundThrowDuration;
 }
 
@@ -245,7 +245,7 @@ static void UpdateHoundAnimation(const Entity& e) {
     // загружен отдельным GLB, даже если набор базовых клипов пуст.
     if (e.houndAction != HOUND_ACTION_NONE && gHoundThrowAnimation &&
         SameHoundSkeleton(*gHoundThrowAnimation) && gHoundThrowAnimation->frameCount > 0) {
-        int frame = std::clamp((int)(e.actionT * 30.0f), 0, gHoundThrowAnimation->frameCount - 1);
+        int frame = std::clamp((int)(e.actionT / 0.017f), 0, gHoundThrowAnimation->frameCount - 1);
         UpdateModelAnimation(gHoundModel, *gHoundThrowAnimation, frame);
         return;
     }
