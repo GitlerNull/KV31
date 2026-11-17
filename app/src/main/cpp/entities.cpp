@@ -94,7 +94,7 @@ static void LoadTextbookModels() {
         "models/textbook_7.glb"
     };
     for (int i = 0; i < 4; ++i) {
-        if (!FileExists(paths[i])) continue;
+        TraceLog(LOG_INFO, "HOUND textbook: attempting %s", paths[i]);
         gTextbookModels[i] = LoadModel(paths[i]);
         gTextbookModelLoaded[i] = gTextbookModels[i].meshCount > 0;
         if (!gTextbookModelLoaded[i])
@@ -209,10 +209,24 @@ for (int i = 0; i < gHoundModel.materialCount; i++) {
 
     // Сначала загружаем отдельный клип броска.
     // Встроенная анимация используется только как запасной вариант.
-    if (FileExists("models/FIZI4KA_throw.glb")) {
-        gHoundThrowAnimations = LoadModelAnimations(
+    TraceLog(LOG_INFO, "HOUND THROW: attempting models/FIZI4KA_throw.glb");
+
+    gHoundThrowAnimations = LoadModelAnimations(
             "models/FIZI4KA_throw.glb", &gHoundThrowAnimCount
         );
+
+        TraceLog(LOG_INFO,
+            "HOUND THROW FILE: animations=%d baseBones=%d",
+            gHoundThrowAnimCount, gHoundModel.boneCount);
+
+        for (int i = 0; gHoundThrowAnimations && i < gHoundThrowAnimCount; ++i) {
+            const ModelAnimation& anim = gHoundThrowAnimations[i];
+
+            TraceLog(LOG_INFO,
+                "HOUND THROW ANIM: index=%d name=%s frames=%d bones=%d customValid=%d",
+                i, anim.name, anim.frameCount, anim.boneCount,
+                SameHoundSkeleton(anim) ? 1 : 0);
+        }
 
         // Ищем отдельный клип по универсальной части имени.
         const char* preferredNames[] = {"throwtextbook", "throw"};
@@ -228,7 +242,6 @@ for (int i = 0; i < gHoundModel.materialCount; i++) {
             }
             if (gHoundThrowAnimation) break;
         }
-    }
 
     // Запасной вариант — анимация из основной модели.
     if (!gHoundThrowAnimation) {
@@ -285,7 +298,7 @@ static float HoundActionDuration() {
 static void UpdateHoundAnimation(const Entity& e) {
     // Одноразовая атака должна работать и тогда, когда бросковый клип
     // загружен отдельным GLB, даже если набор базовых клипов пуст.
-    if (e.houndAction == HOUND_ACTION_THROW && gHoundThrowAnimation &&
+    if (e.houndAction != HOUND_ACTION_NONE && gHoundThrowAnimation &&
         SameHoundSkeleton(*gHoundThrowAnimation) && gHoundThrowAnimation->frameCount > 0) {
         int frame = std::clamp((int)(e.actionT / 0.017f), 0, gHoundThrowAnimation->frameCount - 1);
         UpdateModelAnimation(gHoundModel, *gHoundThrowAnimation, frame);
@@ -295,6 +308,17 @@ static void UpdateHoundAnimation(const Entity& e) {
     if (!gHoundAnimations || gHoundAnimCount <= 0) return;
 
     int index = gHoundIdle;
+
+    // Во время атаки не переключаемся на бег.
+    if (e.houndAction != HOUND_ACTION_NONE) {
+        if (index < 0 || index >= gHoundAnimCount) return;
+        ModelAnimation anim = gHoundAnimations[index];
+        if (anim.frameCount <= 0) return;
+        int frame = (int)(e.t * 60.0f) % anim.frameCount;
+        UpdateModelAnimation(gHoundModel, anim, frame);
+        return;
+    }
+
     if (e.st == S_CHASE || e.st == S_ATTACK) {
         if (gHoundRun >= 0) index = gHoundRun;
         else if (gHoundWalk >= 0) index = gHoundWalk;
@@ -601,7 +625,7 @@ static void UpdateHoundAction(Entity& e, Player& pl, float dt) {
     const int action = e.houndAction;
     const float duration = std::clamp(HoundActionDuration(), 0.45f, 1.8f);
     e.actionT += dt;
-    const float eventTime = duration * (action == HOUND_ACTION_THROW ? 0.44f : 0.66f);
+    const float eventTime = duration * (action == HOUND_ACTION_THROW ? 0.44f : 0.30f);
 
     if (!e.actionEvent && e.actionT >= eventTime) {
         e.actionEvent = true;
@@ -690,6 +714,12 @@ static void Think(Entity& e, Player& pl, float dt) {
         e.throwCd = fmaxf(0.0f, e.throwCd - dt);
         e.atkCd = fmaxf(0.0f, e.atkCd - dt);
 
+        // После перезарядки Физичка получает новый учебник.
+        if (!e.textbookHeld && e.throwCd <= 0.0f) {
+            e.textbookHeld = true;
+            e.textbookIndex = RandomLoadedTextbookIndex();
+        }
+
         if (e.houndAction != HOUND_ACTION_NONE) {
             e.houndVelocity = {0.0f, 0.0f};
             UpdateHoundAction(e, pl, dt);
@@ -718,7 +748,7 @@ static void Think(Entity& e, Player& pl, float dt) {
             if (d <= HOUND_MELEE_RANGE) {
                 Face(e, pp);
                 if (e.atkCd <= 0.0f) {
-                    e.atkCd = 1.15f;
+                    e.atkCd = 0.65f;
                     StartHoundAction(e, HOUND_ACTION_MELEE);
                 } else {
                     FollowHound(e, pp, 4.8f, dt);
@@ -752,7 +782,7 @@ static void Think(Entity& e, Player& pl, float dt) {
                 e.st = S_CHASE;
             } else if (e.atkCd <= 0.0f) {
                 Face(e, pp);
-                e.atkCd = 1.15f;
+                e.atkCd = 0.65f;
                 StartHoundAction(e, HOUND_ACTION_MELEE);
             }
             break;
