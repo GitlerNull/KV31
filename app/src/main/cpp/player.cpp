@@ -25,7 +25,7 @@ Vector3 Forward(const Player& p) {
 Vector2 ButtonCenter(int i, int W, int H, float* radius) {
     float r = i == 5 ? H * 0.055f : H * 0.075f;
     if (radius) *radius = r;
-    if (i == 5) return {W * 0.55f, H * 0.82f};
+    if (i == 5) return {W * 0.60f, H * 0.82f};
     switch (i) {
         case 0:  return {W - 2.2f * r, H - 2.2f * r};   // бег
         case 1:  return {W - 5.0f * r, H - 1.7f * r};   // фонарик
@@ -58,7 +58,7 @@ TouchState ReadTouch(int W, int H) {
             if (nS >= 10) continue;
             s = &S[nS++]; *s = Slot{id, 0, -1, p, false};
             int b = HitButton(p, W, H);
-            if (b >= 0) { s->role = 3; s->btn = b; t.tFlash |= (b == 1); t.tDrink |= (b == 2); t.tMed |= (b == 3); t.tThrow |= (b == 4); }
+            if (b >= 0) { s->role = 3; s->btn = b; t.tFlash |= (b == 1); t.tDrink |= (b == 2); t.tMed |= (b == 3); t.tThrow |= (b == 4); t.crouchToggle |= (b == 5); }
             else if (p.x < W * 0.5f) { s->role = 1; joyOrigin = p; }
             else s->role = 2;
             t.anyNew = true;
@@ -73,7 +73,6 @@ TouchState ReadTouch(int W, int H) {
             t.jx = dx / R; t.jy = dy / R;
         }
         if (s->role == 3 && s->btn == 0) t.sprint = true;
-        if (s->role == 3 && s->btn == 5) t.crouch = true;
     }
     int w = 0; for (int k = 0; k < nS; k++) if (S[k].alive) S[w++] = S[k];
     nS = w;
@@ -81,7 +80,7 @@ TouchState ReadTouch(int W, int H) {
 }
 
 void PlayerUpdate(Player& p, const TouchState& t, float dt, float sensitivity) {
-    p.crouching = t.crouch;
+    if (t.crouchToggle) p.crouching = !p.crouching;
     const float sens = std::clamp(sensitivity, 0.0010f, 0.0080f);
     p.yaw   -= t.look.x * sens;
     p.pitch  = std::clamp(p.pitch - t.look.y * sens, -1.35f, 1.35f);

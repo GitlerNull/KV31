@@ -16,7 +16,7 @@ struct TouchState {
     bool  joy;  Vector2 joyO, joyP;   // джойстик: центр и положение пальца (для отрисовки)
     float jx, jy;                     // -1..1
     Vector2 look;                     // сдвиг пальца камеры за кадр, px
-    bool sprint, tFlash, tDrink, tMed, tThrow, crouch, anyNew;
+    bool sprint, tFlash, tDrink, tMed, tThrow, crouchToggle, anyNew;
     bool tapValid, pointerDown;
     Vector2 tapPos, pointerPos;
 };
