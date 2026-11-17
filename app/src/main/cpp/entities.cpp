@@ -71,8 +71,8 @@ static constexpr int HOUND_ACTION_THROW = 2;
 static constexpr float TEXTBOOK_HELD_SCALE = 0.928f;   // Уменьшен в 2,5 раза
 static constexpr float TEXTBOOK_FLY_SCALE = 0.992f;    // Уменьшен в 2,5 раза
 static constexpr float HOUND_MELEE_RANGE = 0.62f;
-static constexpr float HOUND_THROW_MIN_RANGE = 6.0f;
-static constexpr float HOUND_THROW_MAX_RANGE = 10.0f;
+static constexpr float HOUND_THROW_MIN_RANGE = 3.0f;
+static constexpr float HOUND_THROW_MAX_RANGE = 5.0f;
 static constexpr float HOUND_TEXTBOOK_BOOST = 1.20f;
 static constexpr float HOUND_TEXTBOOK_BOOST_TIME = 2.0f;
 
@@ -652,7 +652,7 @@ static void SettleTextbook(FlyingItem& q) {
     q.settled = true;
     q.v = {0.0f, 0.0f, 0.0f};
     q.p.y = 0.011f;
-    q.rotation = -90.0f;
+    q.rotation = 90.0f;
     q.rotationAxis = {1.0f, 0.0f, 0.0f};
     q.spin = 0.0f;
 }
