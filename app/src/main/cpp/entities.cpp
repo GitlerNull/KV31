@@ -70,10 +70,9 @@ static constexpr int HOUND_ACTION_MELEE = 1;
 static constexpr int HOUND_ACTION_THROW = 2;
 static constexpr float TEXTBOOK_HELD_SCALE = 2.32f;   // Увеличено в 2 раза
 static constexpr float TEXTBOOK_FLY_SCALE = 2.48f;    // Увеличено в 2 раза
-static constexpr float HOUND_MELEE_RANGE = 2.35f;
-static constexpr float HOUND_THROW_MIN_RANGE = 3.00f;
+static constexpr float HOUND_MELEE_RANGE = 2.0f;
+static constexpr float HOUND_THROW_MIN_RANGE = 13.0f;
 static constexpr float HOUND_THROW_MAX_RANGE = 18.0f;
-static constexpr float HOUND_TEXTBOOK_PICKUP_RANGE = 1.35f;
 static constexpr float HOUND_TEXTBOOK_BOOST = 1.20f;
 static constexpr float HOUND_TEXTBOOK_BOOST_TIME = 2.0f;
 
@@ -552,14 +551,6 @@ static float Pan(const Player& pl, Vector2 p) {
 }
 static void Hurt(Player& pl, float dmg, float san) { pl.health -= dmg; pl.sanity -= san; pl.hurt = 1; Haptic(180); Sfx(SFX_HIT, 1.0f); }
 
-static int FindHoundTextbookProjectile() {
-    for (int i = 0; i < (int)gFlying.size(); ++i) {
-        if (!gFlying[i].bottle && gFlying[i].houndTextbook &&
-            gFlying[i].textbook >= 0) return i;
-    }
-    return -1;
-}
-
 static void StartHoundAction(Entity& e, int action) {
     if (action == HOUND_ACTION_THROW) {
         e.textbookIndex = RandomLoadedTextbookIndex();
@@ -616,7 +607,7 @@ static void UpdateHoundAction(Entity& e, Player& pl, float dt) {
         e.actionEvent = true;
         if (action == HOUND_ACTION_THROW && e.textbookHeld) {
             LaunchHoundTextbook(e, pl);
-        } else if (action == HOUND_ACTION_MELEE && e.textbookHeld) {
+        } else if (action == HOUND_ACTION_MELEE) {
             Vector2 pp = {pl.pos.x, pl.pos.z};
             float d = Dist(e.pos, pp);
             if (d <= HOUND_MELEE_RANGE && LineClear(e.pos, pp)) {
@@ -626,10 +617,6 @@ static void UpdateHoundAction(Entity& e, Player& pl, float dt) {
     }
 
     if (e.actionT >= duration) {
-        // Полные две секунды ускорения отсчитываются с момента,
-        // когда Физичка закончила бросок и начала возвращаться за книгой.
-        if (action == HOUND_ACTION_THROW && !e.textbookHeld)
-            e.textbookBoostT = HOUND_TEXTBOOK_BOOST_TIME;
         e.houndAction = HOUND_ACTION_NONE;
         e.actionT = 0.0f;
         e.actionEvent = false;
@@ -728,35 +715,6 @@ static void Think(Entity& e, Player& pl, float dt) {
             if (d < hear || eye) alert();
             break;
         case S_CHASE: {
-            // После броска Физичка преследует именно лежащий/летящий учебник.
-            if (!e.textbookHeld) {
-                int textbookAt = FindHoundTextbookProjectile();
-                if (textbookAt < 0) {
-                    e.textbookHeld = true;  // страховка, если объект был удалён системой ресурсов
-                    e.textbookBoostT = 0.0f;
-                    break;
-                }
-                FlyingItem& textbook = gFlying[textbookAt];
-                Vector2 textbookTarget = {textbook.p.x, textbook.p.z};
-                const float speed = 4.8f * (e.textbookBoostT > 0.0f ? HOUND_TEXTBOOK_BOOST : 1.0f);
-
-                // Сначала проверяем возможность подобрать лежащий учебник.
-                const bool canPickup =
-                    textbook.settled &&
-                    Dist(e.pos, textbookTarget) <= HOUND_TEXTBOOK_PICKUP_RANGE;
-
-                if (canPickup) {
-                    gFlying.erase(gFlying.begin() + textbookAt);
-                    e.textbookHeld = true;
-                    e.throwCd = fmaxf(e.throwCd, 0.65f);
-                    e.pathT = 0.0f;
-                    Say(T("The teacher picked up her textbook.", "Физичка подобрала учебник."), 1.5f);
-                } else {
-                    FollowHound(e, textbookTarget, speed, dt, false);
-                }
-                break;
-            }
-
             if (d <= HOUND_MELEE_RANGE) {
                 Face(e, pp);
                 if (e.atkCd <= 0.0f) {
@@ -792,7 +750,7 @@ static void Think(Entity& e, Player& pl, float dt) {
             // Ближняя атака разрешена только в пределах заданного радиуса.
             if (d > HOUND_MELEE_RANGE) {
                 e.st = S_CHASE;
-            } else if (e.atkCd <= 0.0f && e.textbookHeld) {
+            } else if (e.atkCd <= 0.0f) {
                 Face(e, pp);
                 e.atkCd = 1.15f;
                 StartHoundAction(e, HOUND_ACTION_MELEE);
