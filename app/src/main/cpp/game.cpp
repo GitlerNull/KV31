@@ -407,6 +407,32 @@ static void DrawItems(const Player& pl, float t, bool glow) {
         }
 }
 
+static void DrawLevel2Items(const Player& pl, float t, bool glow) {
+    const int R=ViewRadiusCells();
+    const int cellX=CellOf(pl.pos.x), cellZ=CellOf(pl.pos.z);
+    const float maxD=(float)R*CELL*1.4142f;
+    for(const Item& it:Level2GetItems()) {
+        if(it.taken || abs(it.cx-cellX)>R || abs(it.cz-cellZ)>R) continue;
+        const float x=(it.cx+0.5f)*CELL, z=(it.cz+0.5f)*CELL;
+        if(hypotf(x-pl.pos.x,z-pl.pos.z)>maxD) continue;
+        const float floorY=Level2FloorAt(x,z);
+        Vector3 p=Wv(x,floorY+0.34f+0.045f*sinf(t*2.0f+it.cx),z);
+        const float L=LightAt(x,z);
+        if(!glow) {
+            if(it.type==IT_WATER) DrawCylinder({p.x,p.y-0.14f,p.z},0.075f,0.075f,0.28f,10,Col(155,207,242,L));
+            else if(it.type==IT_BATTERY) DrawCube(p,0.11f,0.20f,0.11f,Col(70,205,95,L));
+            else {
+                DrawCube(p,0.29f,0.14f,0.21f,Col(235,235,228,L));
+                DrawCube(p,0.20f,0.15f,0.055f,Col(210,40,42,L));
+                DrawCube(p,0.055f,0.15f,0.19f,Col(210,40,42,L));
+            }
+        } else {
+            Color c=it.type==IT_WATER?Col(120,190,255,1.0f):it.type==IT_BATTERY?Col(90,255,120,1.0f):Col(255,100,100,1.0f);
+            DrawCube({p.x,p.y+0.34f,p.z},0.055f,0.055f,0.055f,c);
+        }
+    }
+}
+
 static void DrawExit(const Player& pl, bool glow) {
     const int R = ViewRadiusCells();
     const int cellX = CellOf(pl.pos.x), cellZ = CellOf(pl.pos.z);
@@ -550,6 +576,7 @@ static void RenderWorld(const Player& pl, float t, float insane, bool entitiesOn
         tanf(cam.fovy * DEG2RAD * 0.5f) * aspect * 1.15f;
     if (Level2IsActive()) {
         Level2Draw(pl, t, viewMeters);
+        DrawLevel2Items(pl,t,false);
     } else {
         DrawLevel(pl, tanHalfFovX); DrawExit(pl, false); DrawItems(pl, t, false);
     }
@@ -559,6 +586,8 @@ static void RenderWorld(const Player& pl, float t, float insane, bool entitiesOn
     BeginShaderMode(sh);                            // проход 2: самосветящиеся (лампы, глаза, маячки)
     if (!Level2IsActive()) {
         DrawLamps(pl, flick); DrawExit(pl, true); DrawItems(pl, t, true);
+    } else {
+        DrawLevel2Items(pl,t,true);
     }
     if (entitiesOn) EntitiesDraw(pl, true, sh, otherEntitiesEnabled);
     EndShaderMode();
@@ -588,7 +617,7 @@ static void DrawHud(const Player& pl, const TouchState& t, int W, int H, bool ha
     if (Level2IsActive()) {
         Txt(T("LEVEL 2  /  INDUSTRIAL COMPLEX", "УРОВЕНЬ 2  /  ТЕХНИЧЕСКИЙ КОМПЛЕКС"),
             W * 0.5f, H * 0.025f, fs * 0.72f, Fade(Color{155,205,235,255},0.92f), 1);
-        Txt(T("OBJECTIVE: LOCATE THE BLUE CHAMBER", "ЦЕЛЬ: НАЙТИ ГОЛУБУЮ КАМЕРУ"),
+        Txt(T("OBJECTIVE: FIND THE RECESSED FIRE EXIT", "ЦЕЛЬ: НАЙТИ СКРЫТУЮ АВАРИЙНУЮ ДВЕРЬ"),
             W * 0.5f, H * 0.067f, fs * 0.58f, Fade(WHITE,0.78f), 1);
         if (Level2IsDark(pl.pos.x,pl.pos.z))
             Txt(T("DARK SECTOR  /  MOVEMENT DETECTED", "ТЁМНЫЙ СЕКТОР  /  ОБНАРУЖЕНО ДВИЖЕНИЕ"),
@@ -773,6 +802,7 @@ static void SaveSettings() {
 }
 
 static void NewGame(Player& pl) {
+    EntitiesSetHoundRage(false);
     Level2SetActive(false);
     Level2Reset();
     MapReset((uint32_t)GetRandomValue(1, 1 << 30));
@@ -780,6 +810,7 @@ static void NewGame(Player& pl) {
 }
 
 static void NewLevel2(Player& pl) {
+    EntitiesSetHoundRage(false);
     Level2Reset();
     Level2SetActive(true);
     PlayerInit(pl);
@@ -839,17 +870,22 @@ void GameRun() {
             MapUpdate(pl.pos.x, pl.pos.z, settings.viewChunks + 1);
             float Lp = LightAt(pl.pos.x, pl.pos.z);
 
-            if (!Level2IsActive()) if (Item* it = ItemNear(pl.pos.x, pl.pos.z, 0.9f)) { // подбор предметов Level 0
+            if (Item* it = Level2IsActive() ? Level2ItemNear(pl.pos.x,pl.pos.z,0.9f)
+                                             : ItemNear(pl.pos.x,pl.pos.z,0.9f)) {
                 if (it->type == IT_WATER)   { pl.water++; Say(T("Almond Water +1 (restores sanity)", "Миндальная вода +1 (восстанавливает рассудок)")); }
                 if (it->type == IT_BATTERY) { pl.battery = fminf(100, pl.battery + 50); Say(T("Battery: flashlight +50%", "Батарейка: фонарик +50%")); }
                 if (it->type == IT_MEDKIT)  { pl.meds++; Say(T("Medkit +1 (M.E.G. cache)", "Аптечка +1 (тайник M.E.G.)")); }
-                TakeItem(it); Sfx(SFX_PICK);
+                if(Level2IsActive()) Level2TakeItem(it); else TakeItem(it);
+                Sfx(SFX_PICK);
             }
             if (t.tDrink && pl.water > 0) {                                 // Миндальная вода: +35 рассудка
                 pl.water--; pl.emptyBottles++; pl.sanity = fminf(100, pl.sanity + 35); Sfx(SFX_DRINK, 0.8f);
                 Say(T("Almond Water: you feel clearer.", "Миндальная вода: мысли проясняются."));
             }
-            if (t.tThrow && pl.emptyBottles > 0) EntitiesThrowBottle(pl);
+            if (t.tThrow) {
+                const bool doorHandled=Level2IsActive() && Level2Interact(pl);
+                if(!doorHandled && pl.emptyBottles>0) EntitiesThrowBottle(pl);
+            }
             if (t.tMed && pl.meds > 0 && pl.health < 100) { pl.meds--; pl.health = fminf(100, pl.health + 40); Sfx(SFX_PICK); }
 
             // рассудок: падает от блуждания и тьмы (фонарик замедляет падение), при 0 начинается безумие
@@ -869,6 +905,7 @@ void GameRun() {
                 pl.pitch = 0.0f;
                 pl.flash = false;
                 EntitiesReset();
+                EntitiesSetHoundRage(true);
                 Say(T("LEVEL 0. SHE WAS WAITING ON THE OTHER SIDE.","УРОВЕНЬ 0. ОНА ЖДАЛА ПО ТУ СТОРОНУ ДВЕРИ."),5.0f);
                 Haptic(350);
                 hasExit = false;

@@ -29,6 +29,7 @@ constexpr float HOUND_COLLISION_RADIUS = 0.225f;
 bool EntitiesCircleHitsPlayer(float x, float z, float playerRadius);
 
 void EntitiesReset();
+void EntitiesSetHoundRage(bool enabled);
 void EntitiesThrowBottle(Player& pl);
 void EntitiesUpdate(Player& pl, float dt, float insane, bool otherEntitiesEnabled); // Физичка не отключается
 void EntitiesDraw(const Player& pl, bool glowPass, Shader worldShader, bool otherEntitiesEnabled);

@@ -1,5 +1,7 @@
 #pragma once
 #include "player.h"
+#include "map_gen.h"
+#include <vector>
 
 // Изолированный статический технический уровень. Level 0 остаётся в map_gen.
 void Level2SetActive(bool active);
@@ -14,7 +16,14 @@ float Level2FloorAt(float wx, float wz);
 bool Level2CanMoveTo(float x, float z, float radius, float currentFloor, float* newFloor);
 bool Level2IsDark(float wx, float wz);
 Vector2 Level2PatrolPoint(int index);
-// Возвращает true один раз после срабатывания финального шлюза.
+// Взаимодействие кнопкой броска: открывает скрытую аварийную дверь или финальную дверь.
+// Возвращает true, если нажатие было использовано дверью.
+bool Level2Interact(Player& player);
+// Предметы Level 2 изолированы от процедурных чанков Level 0.
+Item* Level2ItemNear(float wx, float wz, float radius);
+void Level2TakeItem(Item* item);
+const std::vector<Item>& Level2GetItems();
+// Возвращает true один раз после ручного открытия конечной двери.
 bool Level2Update(Player& player, float dt);
 void Level2Draw(const Player& player, float time, float viewDistance);
 void Level2DrawModels();

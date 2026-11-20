@@ -11,6 +11,7 @@
 
 static std::vector<Entity> gE;
 static float gSpawnT = 25.0f;
+static bool gHoundRage = false;
 
 // Столкновение игрока только с постоянной Физичкой.
 bool EntitiesCircleHitsPlayer(float x, float z, float playerRadius) {
@@ -291,9 +292,10 @@ static bool SameHoundSkeleton(const ModelAnimation& anim) {
 }
 
 static float HoundActionDuration() {
-    if (gHoundThrowAnimation && gHoundThrowAnimation->frameCount > 1)
-        return (float)(gHoundThrowAnimation->frameCount - 1) * 0.017f;
-    return gHoundThrowDuration;
+    float duration = gHoundThrowAnimation && gHoundThrowAnimation->frameCount > 1
+        ? (float)(gHoundThrowAnimation->frameCount - 1) * 0.017f
+        : gHoundThrowDuration;
+    return gHoundRage ? duration * 0.5f : duration;
 }
 
 static void UpdateHoundAnimation(const Entity& e) {
@@ -618,7 +620,7 @@ static void LaunchHoundTextbook(Entity& e, const Player& pl) {
     // Ускорение начнётся после завершения бросковой анимации,
     // чтобы все 2.0 секунды Физичка действительно бежала к учебнику.
     e.textbookBoostT = 0.0f;
-    e.throwCd = Frand(3.8f, 5.4f);
+    e.throwCd = Frand(3.8f, 5.4f) * (gHoundRage ? 0.5f : 1.0f);
     Sfx(SFX_HOUND, 0.9f);
 }
 
@@ -702,6 +704,108 @@ static Vector2 HoundRoomPoint() {
     return CellCenter(cx, cz);
 }
 
+static bool Level2PlayerNearDarkZone(Vector2 player) {
+    if (Level2IsDark(player.x, player.y)) return true;
+    for (int i=0;i<6;i++) {
+        Vector2 spot=Level2PatrolPoint(i);
+        if (Level2IsDark(spot.x,spot.y) && Dist(player,spot)<6.5f) return true;
+    }
+    return false;
+}
+
+static Vector2 Level2NearestHidePoint(Vector2 from) {
+    Vector2 best=Level2PatrolPoint(0);
+    float bestD=1.0e9f;
+    for(int i=0;i<6;i++) {
+        Vector2 q=Level2PatrolPoint(i);
+        if(!Level2IsDark(q.x,q.y) || Level2CircleHits(q.x,q.y,0.34f)) continue;
+        float d=Dist(from,q);
+        if(d<bestD) { bestD=d; best=q; }
+    }
+    return best;
+}
+
+static bool Level2FindAmbushPoint(Vector2 player, Vector2* out) {
+    float best=1.0e9f; bool found=false;
+    for(int i=0;i<6;i++) {
+        Vector2 q=Level2PatrolPoint(i);
+        float d=Dist(player,q);
+        if(d<3.8f || d>15.0f || !Level2IsDark(q.x,q.y) || Level2CircleHits(q.x,q.y,0.34f)) continue;
+        // Телепортация разрешена только в закрытую от прямого взгляда точку.
+        if(LineClear(player,q)) continue;
+        if(d<best) { best=d; *out=q; found=true; }
+    }
+    return found;
+}
+
+static void ThinkHoundLevel2(Entity& e, Player& pl, float dt, Vector2 pp, float d) {
+    const bool dangerZone=Level2PlayerNearDarkZone(pp);
+    if(e.houndAction!=HOUND_ACTION_NONE) {
+        e.houndVelocity={0.0f,0.0f};
+        UpdateHoundAction(e,pl,dt);
+        return;
+    }
+
+    if(e.st==S_CHASE) {
+        if(!dangerZone) {
+            e.lose+=dt;
+            if(e.lose>1.15f) {
+                e.st=S_PATROL;
+                e.target=Level2NearestHidePoint(e.pos);
+                e.lose=0.0f;
+                e.houndVelocity={0.0f,0.0f};
+            }
+        } else e.lose=0.0f;
+
+        if(e.st==S_CHASE) {
+            if(d<=HOUND_MELEE_RANGE) {
+                Face(e,pp);
+                if(e.atkCd<=0.0f) { e.atkCd=0.58f; StartHoundAction(e,HOUND_ACTION_MELEE); }
+                else FollowHound(e,pp,5.8f,dt);
+            } else if(e.textbookHeld && d>=HOUND_THROW_MIN_RANGE && d<=HOUND_THROW_MAX_RANGE &&
+                     e.throwCd<=0.0f && LineClear(e.pos,pp)) {
+                Face(e,pp);
+                StartHoundAction(e,HOUND_ACTION_THROW);
+            } else {
+                FollowHound(e,pp,5.8f,dt);
+            }
+            return;
+        }
+    }
+
+    if(e.st==S_PATROL) {
+        FollowHound(e,e.target,3.4f,dt,false);
+        if(Dist(e.pos,e.target)<0.72f) {
+            e.st=S_IDLE; e.timer=Frand(4.0f,8.0f); e.houndVelocity={0.0f,0.0f};
+        }
+    } else if(e.st==S_IDLE) {
+        e.houndVelocity={0.0f,0.0f};
+        if(dangerZone) {
+            Vector2 ambush{};
+            if(d>16.0f && Level2FindAmbushPoint(pp,&ambush)) {
+                e.pos=ambush; e.lastPos=ambush; e.wp=ambush; e.target=ambush;
+                e.houndVelocity={0.0f,0.0f};
+            }
+            e.st=S_CHASE; e.lose=0.0f;
+            Sfx(SFX_HOUND,Vol(d),Pan(pl,e.pos));
+            return;
+        }
+        e.timer-=dt;
+        if(e.timer<=0.0f) {
+            Vector2 next=Level2PatrolPoint(GetRandomValue(0,5));
+            if(Dist(pp,next)>10.0f && !LineClear(pp,next) && Dist(e.pos,next)>7.0f) {
+                // Смена тёмной зоны без появления на глазах игрока.
+                e.pos=next; e.lastPos=next; e.wp=next; e.target=next;
+                e.timer=Frand(5.0f,10.0f);
+            } else {
+                e.target=Level2NearestHidePoint(e.pos);
+                if(Dist(e.pos,e.target)>0.8f) e.st=S_PATROL;
+                else e.timer=Frand(4.0f,8.0f);
+            }
+        }
+    }
+}
+
 static void Think(Entity& e, Player& pl, float dt) {
     if (e.type == E_HOUND && e.textbookBoostT > 0.0f)
         e.textbookBoostT = fmaxf(0.0f, e.textbookBoostT - dt);
@@ -725,9 +829,14 @@ static void Think(Entity& e, Player& pl, float dt) {
             e.textbookIndex = RandomLoadedTextbookIndex();
         }
 
-        if (e.houndAction != HOUND_ACTION_NONE) {
+        if (e.houndAction != HOUND_ACTION_NONE && !Level2IsActive()) {
             e.houndVelocity = {0.0f, 0.0f};
             UpdateHoundAction(e, pl, dt);
+            break;
+        }
+
+        if (Level2IsActive()) {
+            ThinkHoundLevel2(e,pl,dt,pp,d);
             break;
         }
 
@@ -751,7 +860,7 @@ static void Think(Entity& e, Player& pl, float dt) {
             if (d < hear || eye) alert();
             break;
         case S_PATROL:
-            Follow(e, e.target, Level2IsActive() ? 2.9f : 2.4f, dt);
+            Follow(e, e.target, gHoundRage ? 3.6f : 2.4f, dt);
             if (Dist(e.pos, e.target) < 1.2f) { e.st = S_IDLE; e.timer = Frand(1, 3); }
             if (d < hear || eye) alert();
             break;
@@ -759,10 +868,10 @@ static void Think(Entity& e, Player& pl, float dt) {
             if (d <= HOUND_MELEE_RANGE) {
                 Face(e, pp);
                 if (e.atkCd <= 0.0f) {
-                    e.atkCd = industrial ? 0.48f : 0.65f;
+                    e.atkCd = 0.65f * (gHoundRage ? 0.5f : 1.0f);
                     StartHoundAction(e, HOUND_ACTION_MELEE);
                 } else {
-                    FollowHound(e, pp, Level2IsActive() ? 6.0f : 4.8f, dt);
+                    FollowHound(e, pp, gHoundRage ? 7.2f : 4.8f, dt);
                 }
             } else if (e.textbookHeld &&
                        d >= HOUND_THROW_MIN_RANGE &&
@@ -771,7 +880,7 @@ static void Think(Entity& e, Player& pl, float dt) {
                 Face(e, pp);
                 StartHoundAction(e, HOUND_ACTION_THROW);
             } else {
-                FollowHound(e, pp, Level2IsActive() ? 6.0f : 4.8f, dt);
+                FollowHound(e, pp, gHoundRage ? 7.2f : 4.8f, dt);
             }
 
             // Если игрок потерян, возвращаемся в комнату.
@@ -793,7 +902,7 @@ static void Think(Entity& e, Player& pl, float dt) {
                 e.st = S_CHASE;
             } else if (e.atkCd <= 0.0f) {
                 Face(e, pp);
-                e.atkCd = industrial ? 0.48f : 0.65f;
+                e.atkCd = 0.65f * (gHoundRage ? 0.5f : 1.0f);
                 StartHoundAction(e, HOUND_ACTION_MELEE);
             }
             break;
@@ -858,6 +967,17 @@ static void Think(Entity& e, Player& pl, float dt) {
     }
 }
 
+void EntitiesSetHoundRage(bool enabled) {
+    const bool activate = enabled && !gHoundRage;
+    gHoundRage=enabled;
+    if (activate) {
+        for (Entity& e : gE) if (e.type==E_HOUND) {
+            e.throwCd*=0.5f;
+            e.atkCd*=0.5f;
+        }
+    }
+}
+
 void EntitiesReset() {
     gE.clear();
     gFlying.clear();
@@ -879,7 +999,8 @@ void EntitiesReset() {
     h.persistent = true;
     h.textbookHeld = true;
     h.textbookIndex = RandomLoadedTextbookIndex();
-    h.throwCd = 1.8f;
+    h.throwCd = Frand(3.8f,5.4f) * (gHoundRage ? 0.5f : 1.0f);
+    h.timer = Level2IsActive() ? Frand(3.0f,6.0f) : 0.0f;
     gE.push_back(h);
 }
 
