@@ -2,6 +2,7 @@
 // нападает, если долго смотреть в тьму на него; Кожекрад (Entity 10) выдаёт себя за человека; Синди - добрая.
 #include "entities.h"
 #include "map_gen.h"
+#include "level2.h"
 #include "rlgl.h"
 #include <vector>
 #include <cctype>
@@ -688,12 +689,14 @@ static void TrySpawn(const Player& pl) {
 // Границы внутренней части комнаты Гончей.
 // Комната занимает клетки x=5..7, z=1..3.
 static bool HoundRoomContains(Vector2 p) {
+    if (Level2IsActive()) return Level2IsDark(p.x, p.y);
     int cx = CellOf(p.x);
     int cz = CellOf(p.y);
     return cx >= 5 && cx <= 7 && cz >= 1 && cz <= 3;
 }
 
 static Vector2 HoundRoomPoint() {
+    if (Level2IsActive()) return Level2PatrolPoint(GetRandomValue(0, 5));
     int cx = GetRandomValue(5, 7);
     int cz = GetRandomValue(1, 3);
     return CellCenter(cx, cz);
@@ -732,9 +735,15 @@ static void Think(Entity& e, Player& pl, float dt) {
             e.houndVelocity = {0.0f, 0.0f};
         }
 
-        float hear = pl.crouching ? 0.0f : std::min(20.0f, pl.noise * 36.0f);
-        bool eye = d < 9 && d > 1.5f && LookingAt(pl, e.pos, 0.93f, 0.7f) && LineClear(pp, e.pos);
+        const bool industrial = Level2IsActive();
+        float hear = pl.crouching ? (industrial ? 0.8f : 0.0f)
+                                  : std::min(industrial ? 32.0f : 20.0f,
+                                             pl.noise * (industrial ? 54.0f : 36.0f));
+        bool eye = d < (industrial ? 15.0f : 9.0f) && d > 1.5f &&
+                   LookingAt(pl, e.pos, 0.93f, industrial ? 1.2f : 0.7f) && LineClear(pp, e.pos);
+        bool darkPresence = industrial && d < 22.0f && Level2IsDark(pp.x, pp.y);
         auto alert = [&] { e.st = S_CHASE; e.lose = 0; Sfx(SFX_HOUND, Vol(d), Pan(pl, e.pos)); };
+        if (darkPresence && e.st != S_CHASE) alert();
         switch (e.st) {
         case S_IDLE:
             e.timer -= dt;
@@ -742,7 +751,7 @@ static void Think(Entity& e, Player& pl, float dt) {
             if (d < hear || eye) alert();
             break;
         case S_PATROL:
-            Follow(e, e.target, 2.4f, dt);
+            Follow(e, e.target, Level2IsActive() ? 2.9f : 2.4f, dt);
             if (Dist(e.pos, e.target) < 1.2f) { e.st = S_IDLE; e.timer = Frand(1, 3); }
             if (d < hear || eye) alert();
             break;
@@ -750,10 +759,10 @@ static void Think(Entity& e, Player& pl, float dt) {
             if (d <= HOUND_MELEE_RANGE) {
                 Face(e, pp);
                 if (e.atkCd <= 0.0f) {
-                    e.atkCd = 0.65f;
+                    e.atkCd = industrial ? 0.48f : 0.65f;
                     StartHoundAction(e, HOUND_ACTION_MELEE);
                 } else {
-                    FollowHound(e, pp, 4.8f, dt);
+                    FollowHound(e, pp, Level2IsActive() ? 6.0f : 4.8f, dt);
                 }
             } else if (e.textbookHeld &&
                        d >= HOUND_THROW_MIN_RANGE &&
@@ -762,13 +771,13 @@ static void Think(Entity& e, Player& pl, float dt) {
                 Face(e, pp);
                 StartHoundAction(e, HOUND_ACTION_THROW);
             } else {
-                FollowHound(e, pp, 4.8f, dt);
+                FollowHound(e, pp, Level2IsActive() ? 6.0f : 4.8f, dt);
             }
 
             // Если игрок потерян, возвращаемся в комнату.
             if (!eye && (pl.crouching || d > hear * 1.2f + 6)) {
                 e.lose += dt;
-                if (e.lose > 5.0f) {
+                if (e.lose > (industrial ? 9.0f : 5.0f)) {
                     e.st = S_PATROL;
                     e.target = HoundRoomPoint();
                     e.lose = 0;
@@ -784,7 +793,7 @@ static void Think(Entity& e, Player& pl, float dt) {
                 e.st = S_CHASE;
             } else if (e.atkCd <= 0.0f) {
                 Face(e, pp);
-                e.atkCd = 0.65f;
+                e.atkCd = industrial ? 0.48f : 0.65f;
                 StartHoundAction(e, HOUND_ACTION_MELEE);
             }
             break;
@@ -859,7 +868,7 @@ void EntitiesReset() {
     Entity h{};
     h.type = E_HOUND;
     h.st = S_IDLE;
-    h.pos = {13.0f, 5.0f};
+    h.pos = Level2IsActive() ? Level2PatrolPoint(0) : Vector2{13.0f, 5.0f};
     h.lastPos = h.pos;
     h.stuckT = 0.0f;
     h.wp = h.pos;
@@ -993,7 +1002,12 @@ void EntitiesUpdate(Player& pl, float dt, float insane, bool otherEntitiesEnable
 
 // ---------- отрисовка ----------
 static Color C(int r, int g, int b, float L) { L = L < 0 ? 0 : L > 1 ? 1 : L; return Color{(unsigned char)r, (unsigned char)g, (unsigned char)b, (unsigned char)(L * 255)}; }
-static void Beg(const Entity& e) { rlPushMatrix(); rlTranslatef(e.pos.x - gOrg.x, 0, e.pos.y - gOrg.z); rlRotatef(e.yaw * RAD2DEG, 0, 1, 0); }
+static void Beg(const Entity& e) {
+    const float floorY = Level2IsActive() ? Level2FloorAt(e.pos.x, e.pos.y) : 0.0f;
+    rlPushMatrix();
+    rlTranslatef(e.pos.x - gOrg.x, floorY, e.pos.y - gOrg.z);
+    rlRotatef(e.yaw * RAD2DEG, 0, 1, 0);
+}
 
 void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEntitiesEnabled) {
     LoadEntityTextures();
@@ -1009,9 +1023,10 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
             if (!glow) {
                 UpdateHoundAnimation(e);
 
+                const float entityFloorY = Level2IsActive() ? Level2FloorAt(e.pos.x, e.pos.y) : 0.0f;
                 Vector3 modelPos = {
                     e.pos.x - gOrg.x,
-                    0.0f,
+                    entityFloorY,
                     e.pos.y - gOrg.z
                 };
 
@@ -1035,7 +1050,7 @@ void EntitiesDraw(const Player& pl, bool glow, Shader worldShader, bool otherEnt
                         const float frontZ = cosf(e.yaw);
                         Vector3 handPos = {
                             e.pos.x - rightX * 0.31f + frontX * 0.34f - gOrg.x,
-                            1.12f,
+                            entityFloorY + 1.12f,
                             e.pos.y - rightZ * 0.31f + frontZ * 0.34f - gOrg.z
                         };
                         DrawModelEx(*textbookModel, handPos, {0.0f, 1.0f, 0.0f},

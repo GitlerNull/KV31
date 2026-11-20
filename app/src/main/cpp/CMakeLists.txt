@@ -25,7 +25,7 @@ endif()
 set(GLUE_DIR ${NDK_DIR}/sources/android/native_app_glue)
 
 add_library(game SHARED
-  main.cpp game.cpp player.cpp map_gen.cpp entities.cpp procgen.cpp jni_bridge.cpp
+  main.cpp game.cpp player.cpp map_gen.cpp level2.cpp entities.cpp procgen.cpp jni_bridge.cpp
   ${RAYLIB_SRC}/rcore.c ${RAYLIB_SRC}/rshapes.c ${RAYLIB_SRC}/rtextures.c
   ${RAYLIB_SRC}/rtext.c ${RAYLIB_SRC}/rmodels.c ${RAYLIB_SRC}/raudio.c ${RAYLIB_SRC}/utils.c
   ${GLUE_DIR}/android_native_app_glue.c)

@@ -14,6 +14,7 @@
 #include "player.h"
 #include "entities.h"
 #include "procgen.h"
+#include "level2.h"
 
 Vector3 gOrg = {0, 0, 0};
 bool gRu = false;
@@ -527,8 +528,9 @@ static void RenderWorld(const Player& pl, float t, float insane, bool entitiesOn
     const float viewMeters = (float)ViewRadiusCells() * CELL;
     // Цвет тумана — глобальная константа. Он не зависит от освещённости
     // клетки под игроком, иначе весь мир меняет оттенок при перемещении.
-    float fogD = 1.15f / (viewMeters * 1.4142f), unlit = 0.0f;
-    const Vector3 fogC = {0.25f, 0.225f, 0.12f};
+    float fogD = (Level2IsActive() ? 1.28f : 1.15f) / (viewMeters * 1.4142f), unlit = 0.0f;
+    const Vector3 fogC = Level2IsActive() ? Vector3{0.105f, 0.135f, 0.16f}
+                                          : Vector3{0.25f, 0.225f, 0.12f};
     SetShaderValue(sh, lView, &cam.position, SHADER_UNIFORM_VEC3);
     SetShaderValue(sh, lDir, &f, SHADER_UNIFORM_VEC3);
     SetShaderValue(sh, lFogC, &fogC, SHADER_UNIFORM_VEC3);
@@ -546,15 +548,22 @@ static void RenderWorld(const Player& pl, float t, float insane, bool entitiesOn
                          (float)fmaxf(GetScreenHeight(), 1);
     const float tanHalfFovX =
         tanf(cam.fovy * DEG2RAD * 0.5f) * aspect * 1.15f;
-    DrawLevel(pl, tanHalfFovX); DrawExit(pl, false); DrawItems(pl, t, false);
+    if (Level2IsActive()) {
+        Level2Draw(pl, t, viewMeters);
+    } else {
+        DrawLevel(pl, tanHalfFovX); DrawExit(pl, false); DrawItems(pl, t, false);
+    }
     if (entitiesOn) EntitiesDraw(pl, false, sh, otherEntitiesEnabled);
     EndShaderMode();
     unlit = 1.0f; SetShaderValue(sh, lUnlit, &unlit, SHADER_UNIFORM_FLOAT);
     BeginShaderMode(sh);                            // проход 2: самосветящиеся (лампы, глаза, маячки)
-    DrawLamps(pl, flick); DrawExit(pl, true); DrawItems(pl, t, true);
+    if (!Level2IsActive()) {
+        DrawLamps(pl, flick); DrawExit(pl, true); DrawItems(pl, t, true);
+    }
     if (entitiesOn) EntitiesDraw(pl, true, sh, otherEntitiesEnabled);
     EndShaderMode();
     unlit = 0.0f; SetShaderValue(sh, lUnlit, &unlit, SHADER_UNIFORM_FLOAT);
+    if (Level2IsActive()) Level2DrawModels();
     rlEnableBackfaceCulling();
     EndMode3D();
     rlEnableColorBlend();
@@ -576,12 +585,22 @@ static void DrawHud(const Player& pl, const TouchState& t, int W, int H, bool ha
     Bar(x, y + bh * 4.8f, bw, bh, pl.stamina / 100, Col(120, 220, 120, 1), T("STAMINA", "СИЛЫ"), fs);
 
     char buf[64];                                   // сигнал M.E.G. - направление и расстояние до люка
-    if (hasExit) {
+    if (Level2IsActive()) {
+        Txt(T("LEVEL 2  /  INDUSTRIAL COMPLEX", "УРОВЕНЬ 2  /  ТЕХНИЧЕСКИЙ КОМПЛЕКС"),
+            W * 0.5f, H * 0.025f, fs * 0.72f, Fade(Color{155,205,235,255},0.92f), 1);
+        Txt(T("OBJECTIVE: LOCATE THE BLUE CHAMBER", "ЦЕЛЬ: НАЙТИ ГОЛУБУЮ КАМЕРУ"),
+            W * 0.5f, H * 0.067f, fs * 0.58f, Fade(WHITE,0.78f), 1);
+        if (Level2IsDark(pl.pos.x,pl.pos.z))
+            Txt(T("DARK SECTOR  /  MOVEMENT DETECTED", "ТЁМНЫЙ СЕКТОР  /  ОБНАРУЖЕНО ДВИЖЕНИЕ"),
+                W * 0.5f, H * 0.105f, fs * 0.56f, Fade(Color{255,105,92,255},0.95f), 1);
+    } else if (hasExit) {
         float dx = exitPos.x - pl.pos.x, dz = exitPos.y - pl.pos.z, rel = pl.yaw - atan2f(dx, dz);
         snprintf(buf, sizeof buf, "%s %d m", T("M.E.G. SIGNAL", "СИГНАЛ M.E.G."), (int)(hypotf(dx, dz) / 5) * 5);
         Txt(buf, W / 2.0f, H * 0.03f, fs, Fade(Col(120, 255, 160, 1), 0.9f), 1);
         DrawPoly(Vector2{W / 2.0f, H * 0.03f + fs * 2.4f}, 3, fs * 0.9f, -90.0f + rel * RAD2DEG, Fade(Col(120, 255, 160, 1), 0.8f));
-    } else Txt(T("M.E.G. SIGNAL: NONE", "СИГНАЛ M.E.G.: НЕТ"), W / 2.0f, H * 0.03f, fs, Fade(GRAY, 0.8f), 1);
+    } else if (!Level2IsActive()) {
+        Txt(T("M.E.G. SIGNAL: NONE", "СИГНАЛ M.E.G.: НЕТ"), W / 2.0f, H * 0.03f, fs, Fade(GRAY, 0.8f), 1);
+    }
 
     if (t.joy) {                                    // виртуальный джойстик
         float R = H * 0.15f;
@@ -628,11 +647,17 @@ static Rectangle CenterRect(int W, int H, float centerY, float widthFactor, floa
 }
 
 static void DrawUiButton(Rectangle r, const char* label, float fs, bool accent = false) {
-    Color fill = accent ? Color{112, 91, 42, 238} : Color{24, 29, 27, 232};
-    Color edge = accent ? Color{255, 220, 120, 235} : Color{185, 190, 174, 185};
-    DrawRectangleRounded(r, 0.16f, 10, fill);
-    DrawRectangleRoundedLinesEx(r, 0.16f, 10, 2.0f, edge);
-    Txt(label, r.x + r.width * 0.5f, r.y + (r.height - fs) * 0.5f, fs, WHITE, 1);
+    Color fill = accent ? Color{65, 82, 78, 246} : Color{18, 25, 27, 242};
+    Color edge = accent ? Color{185, 214, 194, 235} : Color{123, 145, 151, 205};
+    Rectangle shadow{r.x+3.0f,r.y+4.0f,r.width,r.height};
+    DrawRectangleRounded(shadow,0.14f,12,Fade(BLACK,0.68f));
+    DrawRectangleRounded(r,0.14f,12,fill);
+    DrawRectangleRoundedLinesEx(r,0.14f,12,2.0f,edge);
+    DrawLineEx(Vector2{r.x+10.0f,r.y+7.0f},Vector2{r.x+r.width-10.0f,r.y+7.0f},
+               1.0f,Fade(WHITE,accent?0.28f:0.12f));
+    DrawRectangleRounded(Rectangle{r.x+5.0f,r.y+8.0f,4.0f,r.height-16.0f},0.45f,5,
+                         accent?Color{190,214,178,235}:Color{95,145,155,210});
+    Txt(label,r.x+r.width*0.5f,r.y+(r.height-fs)*0.5f,fs,WHITE,1);
 }
 
 static Rectangle SliderTrack(int W, int H, float centerY) {
@@ -668,7 +693,8 @@ static void DrawSettingsGear(float x, float y, float r) {
 static void DrawMainMenu(int W, int H) {
     float fs = Clamp(H * 0.052f, 17.0f, 30.0f);
     Txt(T("BACKROOMS", "ЗАКУЛИСЬЕ"), W * 0.5f, H * 0.16f, fs * 2.0f, Color{242, 218, 142, 255}, 1);
-    Txt(T("LEVEL 0: THE LOBBY", "УРОВЕНЬ 0: ЛОББИ"), W * 0.5f, H * 0.30f, fs * 0.92f, Fade(WHITE, 0.78f), 1);
+    Txt(T("AN UNOFFICIAL BACKROOMS EXPERIENCE", "НЕОФИЦИАЛЬНОЕ ПУТЕШЕСТВИЕ ПО ЗАКУЛИСЬЮ"), W * 0.5f, H * 0.27f, fs * 0.62f, Fade(WHITE, 0.72f), 1);
+    Txt(T("TWO LOCATIONS  /  ONE WAY OUT", "ДВЕ ЛОКАЦИИ  /  ОДИН ВЫХОД"), W * 0.5f, H * 0.34f, fs * 0.58f, Fade(Color{190,205,195,255},0.82f), 1);
     Rectangle level = CenterRect(W, H, 0.53f, 0.64f, 0.13f);
     Rectangle opts = CenterRect(W, H, 0.70f, 0.64f, 0.13f);
     DrawUiButton(level, T("SELECT LEVEL", "ВЫБРАТЬ УРОВЕНЬ"), fs * 0.95f, true);
@@ -676,14 +702,22 @@ static void DrawMainMenu(int W, int H) {
     DrawSettingsGear(opts.x + opts.width * 0.30f, opts.y + opts.height * 0.5f, fs * 0.55f);
 }
 
+static Rectangle Level0Rect(int W, int H) { return CenterRect(W, H, 0.405f, 0.72f, 0.12f); }
+static Rectangle Level2Rect(int W, int H) { return CenterRect(W, H, 0.575f, 0.72f, 0.12f); }
+static Rectangle LevelBackRect(int W, int H) { return CenterRect(W, H, 0.79f, 0.48f, 0.10f); }
+
 static void DrawLevelSelect(int W, int H) {
-    float fs = Clamp(H * 0.050f, 17.0f, 29.0f);
-    Txt(T("SELECT LEVEL", "ВЫБОР УРОВНЯ"), W * 0.5f, H * 0.16f, fs * 1.65f, Color{242, 218, 142, 255}, 1);
-    Rectangle level = CenterRect(W, H, 0.49f, 0.68f, 0.15f);
-    Rectangle back = CenterRect(W, H, 0.73f, 0.68f, 0.12f);
-    DrawUiButton(level, T("LEVEL 0 - THE LOBBY", "УРОВЕНЬ 0 - ЛОББИ"), fs * 0.9f, true);
-    Txt(T("AVAILABLE", "ДОСТУПЕН"), W * 0.5f, level.y + level.height + fs * 0.35f, fs * 0.62f, Color{160, 220, 160, 255}, 1);
-    DrawUiButton(back, T("BACK", "НАЗАД"), fs * 0.82f, false);
+    float fs = Clamp(H * 0.047f, 16.0f, 27.0f);
+    Rectangle panel{W*0.12f,H*0.09f,W*0.76f,H*0.82f};
+    DrawRectangleRounded(panel,0.035f,12,Fade(Color{7,12,15,255},0.94f));
+    DrawRectangleRoundedLinesEx(panel,0.035f,12,2.0f,Fade(Color{177,194,195,255},0.68f));
+    Txt(T("SELECT LOCATION", "ВЫБОР ЛОКАЦИИ"), W * 0.5f, H * 0.16f, fs * 1.55f, Color{226,218,186,255}, 1);
+    Rectangle l0=Level0Rect(W,H), l2=Level2Rect(W,H), back=LevelBackRect(W,H);
+    DrawUiButton(l0,T("LEVEL 0  /  THE LOBBY","УРОВЕНЬ 0  /  ЛОББИ"),fs*0.92f,true);
+    Txt(T("ENDLESS OFFICE MAZE  -  INTRODUCTORY AREA","БЕСКОНЕЧНЫЙ ОФИСНЫЙ ЛАБИРИНТ  -  НАЧАЛЬНАЯ ЗОНА"),W*.5f,l0.y+l0.height+fs*.14f,fs*.49f,Fade(WHITE,.72f),1);
+    DrawUiButton(l2,T("LEVEL 2  /  TECHNICAL COMPLEX","УРОВЕНЬ 2  /  ТЕХНИЧЕСКИЙ КОМПЛЕКС"),fs*.86f,true);
+    Txt(T("SERVICE TUNNELS  -  POWER ROOMS  -  UNKNOWN SIGNAL","СЛУЖЕБНЫЕ ТОННЕЛИ  -  ЭЛЕКТРОЩИТОВЫЕ  -  НЕИЗВЕСТНЫЙ СИГНАЛ"),W*.5f,l2.y+l2.height+fs*.14f,fs*.49f,Fade(Color{150,205,230,255},.9f),1);
+    DrawUiButton(back,T("BACK TO MENU","В ГЛАВНОЕ МЕНЮ"),fs*.76f,false);
 }
 
 static Rectangle EntitiesToggleRect(int W, int H) {
@@ -739,8 +773,22 @@ static void SaveSettings() {
 }
 
 static void NewGame(Player& pl) {
+    Level2SetActive(false);
+    Level2Reset();
     MapReset((uint32_t)GetRandomValue(1, 1 << 30));
     PlayerInit(pl); EntitiesReset(); gMsgT = 0;
+}
+
+static void NewLevel2(Player& pl) {
+    Level2Reset();
+    Level2SetActive(true);
+    PlayerInit(pl);
+    pl.pos = {9.0f, 0.0f, 42.0f};
+    pl.yaw = PI * 0.5f;
+    pl.water = 1;
+    EntitiesReset();
+    gMsgT = 0;
+    Say(T("LEVEL 2. Keep to the lit service route.","УРОВЕНЬ 2. Держитесь освещённого служебного коридора."),5.0f);
 }
 
 static const char* RADIO_EN[] = {
@@ -762,6 +810,7 @@ void GameRun() {
     gRu = LoadUiFont();
     LoadWallCaption();
     gA = ProcInit();
+    Level2Load();
     SetTextureWrap(gA.ceiling, TEXTURE_WRAP_REPEAT);
     gPortrait = LoadTexture("kv31_wall_portrait.jpg");
     if (gPortrait.id == 0) {
@@ -790,7 +839,7 @@ void GameRun() {
             MapUpdate(pl.pos.x, pl.pos.z, settings.viewChunks + 1);
             float Lp = LightAt(pl.pos.x, pl.pos.z);
 
-            if (Item* it = ItemNear(pl.pos.x, pl.pos.z, 0.9f)) {          // подбор предметов
+            if (!Level2IsActive()) if (Item* it = ItemNear(pl.pos.x, pl.pos.z, 0.9f)) { // подбор предметов Level 0
                 if (it->type == IT_WATER)   { pl.water++; Say(T("Almond Water +1 (restores sanity)", "Миндальная вода +1 (восстанавливает рассудок)")); }
                 if (it->type == IT_BATTERY) { pl.battery = fminf(100, pl.battery + 50); Say(T("Battery: flashlight +50%", "Батарейка: фонарик +50%")); }
                 if (it->type == IT_MEDKIT)  { pl.meds++; Say(T("Medkit +1 (M.E.G. cache)", "Аптечка +1 (тайник M.E.G.)")); }
@@ -811,15 +860,32 @@ void GameRun() {
             pl.hurt = fmaxf(0, pl.hurt - dt * 1.5f);
 
             EntitiesUpdate(pl, dt, insane, settings.otherEntities);
-            if (pl.sanity < 25) {                                           // галлюцинации: далёкие звуки
+            if (Level2Update(pl, dt)) {
+                // Верхний порог шлюза ведёт обратно на Level 0; встреча начинается сразу за дверью.
+                Level2SetActive(false);
+                MapReset((uint32_t)GetRandomValue(1, 1 << 30));
+                pl.pos = {8.5f, 0.0f, 5.0f};
+                pl.yaw = PI * 0.5f;
+                pl.pitch = 0.0f;
+                pl.flash = false;
+                EntitiesReset();
+                Say(T("LEVEL 0. SHE WAS WAITING ON THE OTHER SIDE.","УРОВЕНЬ 0. ОНА ЖДАЛА ПО ТУ СТОРОНУ ДВЕРИ."),5.0f);
+                Haptic(350);
+                hasExit = false;
+                radioT = 100000.0f;
+            }
+            if (pl.sanity < 25 && !Level2IsActive()) {                  // фантомные звуки Level 0
                 phantomT -= dt;
                 if (phantomT <= 0) { phantomT = Frand(8, 18); Sfx(SFX_HOUND, 0.35f, Frand(0, 1)); }
             }
 
             scanT -= dt;
-            if (scanT <= 0) { scanT = 0.5f; hasExit = NearestExit(pl.pos.x, pl.pos.z, &exitPos); }
-            int cx = CellOf(pl.pos.x), cz = CellOf(pl.pos.z);               // люк: постоять на нём ~1 с
-            if (IsExitCell(cx, cz) && hypotf((cx + 0.5f) * CELL - pl.pos.x, (cz + 0.5f) * CELL - pl.pos.z) < 1.0f) {
+            if (scanT <= 0) {
+                scanT = 0.5f;
+                hasExit = !Level2IsActive() && NearestExit(pl.pos.x, pl.pos.z, &exitPos);
+            }
+            int cx = CellOf(pl.pos.x), cz = CellOf(pl.pos.z);               // люк Level 0
+            if (!Level2IsActive() && IsExitCell(cx, cz) && hypotf((cx + 0.5f) * CELL - pl.pos.x, (cz + 0.5f) * CELL - pl.pos.z) < 1.0f) {
                 if (pl.exitT == 0) Say(T("The hatch is open... hold still.", "Люк открывается... не двигайтесь."));
                 pl.exitT += dt;
                 if (pl.exitT > 1.2f) { state = ST_WON; stateT = 0; Haptic(200); }
@@ -840,11 +906,11 @@ void GameRun() {
                 if (HitRect(level, t.tapPos)) state = ST_LEVEL_SELECT;
                 else if (HitRect(opts, t.tapPos)) state = ST_SETTINGS;
             } else if (state == ST_LEVEL_SELECT && t.tapValid) {
-                Rectangle level = CenterRect(W, H, 0.49f, 0.68f, 0.15f);
-                Rectangle back = CenterRect(W, H, 0.73f, 0.68f, 0.12f);
-                if (HitRect(level, t.tapPos)) {
+                if (HitRect(Level0Rect(W,H), t.tapPos)) {
                     NewGame(pl); radioT = 3; radioIdx = 0; state = ST_PLAY;
-                } else if (HitRect(back, t.tapPos)) state = ST_MENU;
+                } else if (HitRect(Level2Rect(W,H), t.tapPos)) {
+                    NewLevel2(pl); radioT = 100000.0f; radioIdx = 0; state = ST_PLAY;
+                } else if (HitRect(LevelBackRect(W,H), t.tapPos)) state = ST_MENU;
             } else if (state == ST_SETTINGS) {
                 Rectangle toggle = EntitiesToggleRect(W, H);
                 Rectangle back = CenterRect(W, H, 0.865f, 0.70f, 0.105f);
@@ -907,5 +973,6 @@ void GameRun() {
     if (gWallCaption.id > 0) UnloadTexture(gWallCaption);
     UnloadShader(sh);
     ProcFree(gA);
+    Level2Unload();
     if (gRu) UnloadFont(gFont);
 }

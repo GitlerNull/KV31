@@ -3,6 +3,7 @@
 #include "player.h"
 #include "map_gen.h"
 #include "entities.h"
+#include "level2.h"
 #include <algorithm>
 
 void PlayerInit(Player& p) {
@@ -15,7 +16,7 @@ void PlayerInit(Player& p) {
 Vector3 EyePos(const Player& p) {
     float height = p.crouching ? 0.8f : 1.6f;
     float bob = p.crouching ? 0.015f : 0.035f;
-    return {p.pos.x, height + sinf(p.bob) * bob, p.pos.z};
+    return {p.pos.x, p.pos.y + height + sinf(p.bob) * bob, p.pos.z};
 }
 Vector3 Forward(const Player& p) {
     float cp = cosf(p.pitch);
@@ -95,14 +96,28 @@ void PlayerUpdate(Player& p, const TouchState& t, float dt, float sensitivity) {
     float vx = (f.x * -jy + r.x * jx) * spd * dt, vz = (f.z * -jy + r.z * jx) * spd * dt;
     // Стены и Физичка блокируют движение игрока независимо по осям.
     float nextX = p.pos.x + vx;
-    if (!CircleHits(nextX, p.pos.z, playerRadius) &&
-        !EntitiesCircleHitsPlayer(nextX, p.pos.z, playerRadius)) {
+    if (Level2IsActive()) {
+        float floorY = p.pos.y;
+        if (Level2CanMoveTo(nextX, p.pos.z, playerRadius, p.pos.y, &floorY) &&
+            !EntitiesCircleHitsPlayer(nextX, p.pos.z, playerRadius)) {
+            p.pos.x = nextX;
+            p.pos.y = floorY;
+        }
+    } else if (!CircleHits(nextX, p.pos.z, playerRadius) &&
+               !EntitiesCircleHitsPlayer(nextX, p.pos.z, playerRadius)) {
         p.pos.x = nextX;
     }
 
     float nextZ = p.pos.z + vz;
-    if (!CircleHits(p.pos.x, nextZ, playerRadius) &&
-        !EntitiesCircleHitsPlayer(p.pos.x, nextZ, playerRadius)) {
+    if (Level2IsActive()) {
+        float floorY = p.pos.y;
+        if (Level2CanMoveTo(p.pos.x, nextZ, playerRadius, p.pos.y, &floorY) &&
+            !EntitiesCircleHitsPlayer(p.pos.x, nextZ, playerRadius)) {
+            p.pos.z = nextZ;
+            p.pos.y = floorY;
+        }
+    } else if (!CircleHits(p.pos.x, nextZ, playerRadius) &&
+               !EntitiesCircleHitsPlayer(p.pos.x, nextZ, playerRadius)) {
         p.pos.z = nextZ;
     }
 

@@ -2,6 +2,7 @@
 // Структура: решётка комнат с периодом 4 клетки (3x3 внутри + стены/столбы по краям).
 // Каждый сегмент стены: глухой / с дверью в 1 клетку / открытый. Блоки 3x3 комнат иногда - "залы" без стен.
 #include "map_gen.h"
+#include "level2.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdlib>
@@ -98,6 +99,7 @@ Chunk& GetChunk(int chx, int chz) {
 }
 
 bool IsSolid(int cx, int cz) {
+    if (Level2IsActive()) return Level2IsSolid(cx, cz);
     int chx = FloorDiv(cx, CHUNK), chz = FloorDiv(cz, CHUNK);
     Chunk* c = gLast;
     if (!c || c->x != chx || c->z != chz) { c = &GetChunk(chx, chz); gLast = c; }
@@ -105,6 +107,7 @@ bool IsSolid(int cx, int cz) {
 }
 
 bool CircleHits(float x, float z, float r) {
+    if (Level2IsActive()) return Level2CircleHits(x, z, r);
     int x0 = CellOf(x - r), x1 = CellOf(x + r), z0 = CellOf(z - r), z1 = CellOf(z + r);
     for (int j = z0; j <= z1; j++) for (int i = x0; i <= x1; i++) if (IsSolid(i, j)) return true;
     return false;
@@ -165,6 +168,7 @@ float LampLevel(int rx, int ry) {
 
 // Билинейная интерполяция яркости четырёх ближайших ламп -> плавные градиенты света и тьмы
 float LightAt(float wx, float wz) {
+    if (Level2IsActive()) return Level2LightAt(wx, wz);
     int cx = CellOf(wx), cz = CellOf(wz);
     if (cx >= 5 && cx <= 7 && cz >= 1 && cz <= 3) return 0.07f; // постоянная темнота внутри комнаты
     float u = (wx / CELL - 2.5f) / 4.0f, v = (wz / CELL - 2.5f) / 4.0f;
@@ -177,6 +181,7 @@ float LightAt(float wx, float wz) {
 }
 
 void MapUpdate(float px, float pz, int keepChunks) {
+    if (Level2IsActive()) return;
     // Оставляем радиус прорисовки плюс один буферный чанк для предметов и границ.
     keepChunks = std::max(2, std::min(6, keepChunks));
     const size_t maxCached = (size_t)(2 * keepChunks + 1) * (size_t)(2 * keepChunks + 1) + 16;
