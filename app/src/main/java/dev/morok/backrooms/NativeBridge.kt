@@ -1,4 +1,4 @@
-package mopok.dev.backrooms
+package dev.morok.backrooms
 
 import android.app.Activity
 

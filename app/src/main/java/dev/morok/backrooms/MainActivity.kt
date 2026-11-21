@@ -1,4 +1,4 @@
-package mopok.dev.backrooms
+package dev.morok.backrooms
 
 import android.app.NativeActivity
 import android.os.Build
@@ -10,6 +10,7 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import java.io.File
 
 /**
  * Точка входа. NativeActivity загружает libgame.so (meta-data android.app.lib_name) и запускает raylib android_main -> main().
@@ -46,6 +47,35 @@ class MainActivity : NativeActivity() {
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
                 View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
         }
+    }
+
+    /** Системный Roboto читается из /system/fonts и используется для русских надписей. */
+    fun loadUiFontData(): ByteArray? {
+        val candidates = arrayOf(
+            "/system/fonts/Roboto-Regular.ttf",
+            "/system/fonts/NotoSans-Regular.ttf"
+        )
+        for (path in candidates) {
+            try {
+                val file = File(path)
+                if (file.isFile && file.canRead()) return file.readBytes()
+            } catch (_: Exception) { }
+        }
+        return null
+    }
+
+    private val settingsPrefs by lazy {
+        getSharedPreferences("KV31Settings", MODE_PRIVATE)
+    }
+
+    /** Чтение настройки из постоянного хранилища Android. */
+    fun loadSettingValue(index: Int): Int {
+        return settingsPrefs.getInt("value_$index", 0)
+    }
+
+    /** Сохранение настройки в постоянное хранилище Android. */
+    fun saveSettingValue(index: Int, value: Int) {
+        settingsPrefs.edit().putInt("value_$index", value).apply()
     }
 
     /** Вызывается из C++ (Haptic) через JNI. */

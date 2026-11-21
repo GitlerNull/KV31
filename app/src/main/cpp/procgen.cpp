@@ -6,56 +6,161 @@
 #include <cstring>
 
 // ---------- текстуры ----------
-// тайловый value-noise: u,v в [0,1), g - число ячеек решётки
-static float VN(float u, float v, int g, uint32_t salt) {
-    float x = u * g, y = v * g; int ix = (int)floorf(x), iy = (int)floorf(y);
-    float fx = x - ix, fy = y - iy; fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
-    auto h = [&](int a, int b) { return Rand01(PosMod(a, g), PosMod(b, g), salt); };
-    float a = h(ix, iy), b = h(ix + 1, iy), c = h(ix, iy + 1), d = h(ix + 1, iy + 1);
-    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+// Текстуры рассчитываются один раз при запуске. Шаблоны ориентированы на
+// реальные интерьеры Level 0: выцветшие узорчатые обои, бежевый петлевой ковёр
+// и акустические плиты подвесного потолка. Все шумы периодические, поэтому
+// стыки тайлов не должны образовывать заметных полос.
+static float Smooth01(float a, float b, float x) {
+    float t = (x - a) / (b - a);
+    t = fmaxf(0.0f, fminf(1.0f, t));
+    return t * t * (3.0f - 2.0f * t);
 }
+
+// Периодический value-noise: края текстуры совпадают при повторении.
+static float VN(float u, float v, int g, uint32_t salt) {
+    float x = u * g, y = v * g;
+    int ix = (int)floorf(x), iy = (int)floorf(y);
+    float fx = x - ix, fy = y - iy;
+    fx = fx * fx * (3.0f - 2.0f * fx);
+    fy = fy * fy * (3.0f - 2.0f * fy);
+    auto h = [&](int a, int b) { return Rand01(PosMod(a, g), PosMod(b, g), salt); };
+    float a = h(ix, iy), b = h(ix + 1, iy);
+    float c = h(ix, iy + 1), d = h(ix + 1, iy + 1);
+    return (a * (1.0f - fx) + b * fx) * (1.0f - fy) +
+           (c * (1.0f - fx) + d * fx) * fy;
+}
+
+static float FBM(float u, float v, uint32_t salt) {
+    return VN(u, v, 4, salt) * 0.52f +
+           VN(u, v, 8, salt + 1) * 0.30f +
+           VN(u, v, 16, salt + 2) * 0.18f;
+}
+
+static float TileRand(int x, int y, int period, uint32_t salt) {
+    return Rand01(PosMod(x, period), PosMod(y, period), salt);
+}
+
 static Color RGB(float r, float g, float b) {
     auto c = [](float v) { return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v); };
     return Color{c(r), c(g), c(b), 255};
 }
+
 static Texture2D Finish(Image& im) {
-    Texture2D t = LoadTextureFromImage(im); UnloadImage(im);
-    GenTextureMipmaps(&t);                       // размеры степени двойки -> безопасно для GLES2
-    SetTextureFilter(t, TEXTURE_FILTER_TRILINEAR);
-    SetTextureWrap(t, TEXTURE_WRAP_REPEAT);
+    Texture2D t = LoadTextureFromImage(im);
+    UnloadImage(im);
+    if (t.id != 0) {
+        GenTextureMipmaps(&t);
+        SetTextureFilter(t, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(t, TEXTURE_WRAP_REPEAT);
+    }
     return t;
 }
 
-static Texture2D GenWall() {                     // жёлтые влажные обои с полосами и пятнами
-    const int N = 128; Image im = GenImageColor(N, N, WHITE); Color* px = (Color*)im.data;
-    for (int y = 0; y < N; y++) for (int x = 0; x < N; x++) {
+static Texture2D GenWall() {
+    // 512 px: subdued 1990s wallpaper print, faded yellow-cream paper,
+    // narrow roll seams, fine grain and very mild damp discoloration.
+    const int N = 512;
+    Image im = GenImageColor(N, N, WHITE);
+    Color* px = (Color*)im.data;
+
+    for (int y = 0; y < N; ++y) for (int x = 0; x < N; ++x) {
         float u = (float)x / N, v = (float)y / N;
-        float k = ((x % 32) < 12 ? 0.90f : 1.0f) * (0.96f + 0.06f * Rand01(x, y, 1));
-        k *= 0.78f + 0.40f * VN(u, v, 4, 5);                           // сырые пятна
-        k *= 1.0f - 0.22f * fmaxf(0.0f, v - 0.55f) * VN(u, v, 8, 6);   // подтёки к низу
-        Color c = RGB(212 * k, 192 * k, 98 * k);
-        if (y >= 118) c = RGB(125 * k, 105 * k, 58 * k);               // плинтус
-        else if (y < 5) c = RGB(150 * k, 132 * k, 70 * k);             // карниз
-        px[y * N + x] = c;
+        float cloud = FBM(u, v, 51);
+        float damp = VN(u, v, 3, 57) * 0.55f + VN(u, v, 7, 58) * 0.45f;
+        float grain = (TileRand(x, y, N, 59) - 0.5f) * 6.0f;
+
+        // Неброский повторяющийся ромбовидно-волнистый рисунок, а не крупные полосы.
+        float nx = ((float)(x % 64) + 0.5f) / 32.0f - 1.0f;
+        float ny = ((float)(y % 64) + 0.5f) / 32.0f - 1.0f;
+        float diamond = fabsf(fabsf(nx) + fabsf(ny) - 1.12f);
+        float innerDiamond = fabsf(fabsf(nx) + fabsf(ny) - 0.52f);
+        float waveA = fabsf(nx - 0.20f * sinf(ny * PI));
+        float waveB = fabsf(nx + 0.20f * sinf(ny * PI));
+        float radius = sqrtf(nx * nx + ny * ny);
+        float rosetteRadius = 0.27f + 0.065f * cosf(4.0f * atan2f(ny, nx));
+        float rosette = 1.0f - Smooth01(0.025f, 0.075f, fabsf(radius - rosetteRadius));
+        float center = 1.0f - Smooth01(0.025f, 0.070f, radius);
+        float print = fmaxf(1.0f - Smooth01(0.025f, 0.075f, diamond),
+                     fmaxf(0.55f * (1.0f - Smooth01(0.025f, 0.065f, innerDiamond)),
+                     fmaxf(0.45f * (1.0f - Smooth01(0.025f, 0.060f, fminf(waveA, waveB))),
+                           fmaxf(0.72f * rosette, 0.55f * center))));
+
+        // Тонкие вертикальные стыки рулонов обоев примерно через 0,5 м.
+        int rollX = x % 128;
+        float seam = (rollX < 2) ? 0.94f : ((rollX == 2 || rollX == 127) ? 0.985f : 1.0f);
+        float stain = 0.94f + 0.12f * cloud;
+        stain *= 1.0f - 0.10f * Smooth01(0.52f, 1.0f, v) * damp;
+        float k = stain * seam;
+
+        float r = 205.0f * k + grain;
+        float g = 190.0f * k + grain * 0.92f;
+        float b = 132.0f * k + grain * 0.72f;
+        // Цвет печатного рисунка близок к основному фону — он читается вблизи,
+        // но не превращает стены в контрастные декоративные обои.
+        float ink = print * (0.20f + 0.06f * (1.0f - cloud));
+        r -= 34.0f * ink; g -= 31.0f * ink; b -= 23.0f * ink;
+        float highlight = print * 0.035f;
+        r += 18.0f * highlight; g += 17.0f * highlight; b += 12.0f * highlight;
+
+        // Плинтус и узкая верхняя кромка продолжаются по всей стене.
+        if (y >= 480) { r *= 0.70f; g *= 0.68f; b *= 0.62f; }
+        else if (y < 7) { r *= 0.84f; g *= 0.82f; b *= 0.73f; }
+        px[y * N + x] = RGB(r, g, b);
     }
     return Finish(im);
 }
-static Texture2D GenCarpet() {                   // влажный ковёр
-    const int N = 128; Image im = GenImageColor(N, N, WHITE); Color* px = (Color*)im.data;
-    for (int y = 0; y < N; y++) for (int x = 0; x < N; x++) {
+
+static Texture2D GenCarpet() {
+    // 512 px loop-pile carpet: oatmeal/tan base, tiny woven fibres and soft
+    // irregular traffic/damp shading. The image repeats over a 2 m floor tile.
+    const int N = 512;
+    Image im = GenImageColor(N, N, WHITE);
+    Color* px = (Color*)im.data;
+    for (int y = 0; y < N; ++y) for (int x = 0; x < N; ++x) {
         float u = (float)x / N, v = (float)y / N;
-        float k = (0.80f + 0.35f * Rand01(x, y, 2)) * (0.75f + 0.40f * VN(u, v, 6, 7));
-        px[y * N + x] = RGB(132 * k, 112 * k, 52 * k);
+        float broad = FBM(u, v, 71);
+        float medium = VN(u, v, 12, 75);
+        float fibre = TileRand(x, y, N, 78);
+        float micro = TileRand(x / 2, y / 2, N / 2, 79);
+        float weave = ((x + 2 * y) % 5 == 0) ? 1.0f : 0.0f;
+        float pile = 0.86f + 0.20f * fibre + 0.10f * micro + 0.045f * weave;
+        float stain = 0.80f + 0.34f * broad;
+        stain *= 0.94f + 0.12f * medium;
+        // Tiny individual dark fibres, not block-shaped dirt pixels.
+        float fleck = TileRand(x, y, N, 80);
+        float dirt = fleck < 0.012f ? 0.84f : 1.0f;
+        float k = pile * stain * dirt;
+        px[y * N + x] = RGB(151.0f * k, 130.0f * k, 91.0f * k);
     }
     return Finish(im);
 }
-static Texture2D GenCeil() {                     // потолочная плитка 32 px
-    const int N = 128; Image im = GenImageColor(N, N, WHITE); Color* px = (Color*)im.data;
-    for (int y = 0; y < N; y++) for (int x = 0; x < N; x++) {
-        float k = 0.93f + 0.07f * Rand01(x, y, 3);
-        if (Rand01(x, y, 4) < 0.05f) k *= 0.8f;
-        bool line = (x % 32) < 2 || (y % 32) < 2;
-        px[y * N + x] = line ? RGB(140 * k, 138 * k, 120 * k) : RGB(208 * k, 205 * k, 182 * k);
+
+static Texture2D GenCeil() {
+    // Acoustic mineral-fibre tiles, 4x4 panels per texture. At the current
+    // world UV scale, each panel is about 0.5 m square.
+    const int N = 512;
+    const int TILE = 128;
+    Image im = GenImageColor(N, N, WHITE);
+    Color* px = (Color*)im.data;
+    for (int y = 0; y < N; ++y) for (int x = 0; x < N; ++x) {
+        int lx = x % TILE, ly = y % TILE;
+        int tileX = x / TILE, tileY = y / TILE;
+        float panelTone = 0.965f + 0.045f * Rand01(tileX, tileY, 83);
+        float speckle = (TileRand(x, y, N, 84) - 0.5f) * 12.0f;
+        float pit = TileRand(x / 3, y / 3, N / 3, 85);
+        float dirt = pit < 0.025f ? -13.0f : 0.0f;
+        bool joint = lx < 3 || ly < 3;
+        float edge = fminf((float)lx, fminf((float)ly,
+                     fminf((float)(TILE - 1 - lx), (float)(TILE - 1 - ly))));
+        float edgeShade = 1.0f - 0.035f * (1.0f - Smooth01(0.0f, 12.0f, edge));
+        float k = panelTone * edgeShade;
+        if (joint) {
+            px[y * N + x] = RGB(132.0f + speckle * 0.25f, 129.0f + speckle * 0.25f, 116.0f + speckle * 0.20f);
+        } else {
+            px[y * N + x] = RGB(207.0f * k + speckle + dirt,
+                                203.0f * k + speckle + dirt,
+                                185.0f * k + speckle * 0.80f + dirt);
+        }
     }
     return Finish(im);
 }
@@ -113,7 +218,40 @@ static void SynthAll() {
 
 ProcAssets ProcInit() {
     ProcAssets a{};
-    a.wall = GenWall(); a.carpet = GenCarpet(); a.ceiling = GenCeil();
+    a.wall = LoadTexture("textures/wallpaper_reference.jpg");
+    if (a.wall.id == 0) {
+        TraceLog(LOG_WARNING, "Wallpaper asset unavailable; using procedural fallback");
+        a.wall = GenWall();
+    } else {
+        GenTextureMipmaps(&a.wall);
+        SetTextureFilter(a.wall, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(a.wall, TEXTURE_WRAP_REPEAT);
+        TraceLog(LOG_INFO, "Wallpaper loaded: %i x %i",
+                 a.wall.width, a.wall.height);
+    }
+
+    a.carpet = LoadTexture("textures/carpet_beige.jpg");
+    if (a.carpet.id == 0) {
+        TraceLog(LOG_WARNING, "Carpet asset unavailable; using procedural fallback");
+        a.carpet = GenCarpet();
+    } else {
+        GenTextureMipmaps(&a.carpet);
+        SetTextureFilter(a.carpet, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(a.carpet, TEXTURE_WRAP_REPEAT);
+        TraceLog(LOG_INFO, "Carpet loaded: %i x %i",
+                 a.carpet.width, a.carpet.height);
+    }
+    a.ceiling = LoadTexture("textures/ceiling_tiles.png");
+    if (a.ceiling.id == 0) {
+        TraceLog(LOG_WARNING, "Ceiling texture unavailable; using procedural fallback");
+        a.ceiling = GenCeil();
+    } else {
+        GenTextureMipmaps(&a.ceiling);
+        SetTextureFilter(a.ceiling, TEXTURE_FILTER_TRILINEAR);
+        SetTextureWrap(a.ceiling, TEXTURE_WRAP_REPEAT);
+        TraceLog(LOG_INFO, "Ceiling texture loaded: %i x %i",
+                 a.ceiling.width, a.ceiling.height);
+    }
     Image v = GenImageGradientRadial(256, 256, 0.35f, Color{0, 0, 0, 0}, Color{0, 0, 0, 255});
     a.vignette = LoadTextureFromImage(v); UnloadImage(v);
     InitAudioDevice(); gAudio = IsAudioDeviceReady();

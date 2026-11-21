@@ -11,9 +11,26 @@ struct Entity {
     float yaw, timer, lookT, pathT, atkCd, life, t, lose, stunT, throwCd;
     Vector2 target, wp;       // цель патруля / следующая клетка пути
     bool flag;                // Кожекрад: true = уже раскрыт; Синди: true = игрок уже предупреждён
+    bool persistent{};        // особая сущность уровня: не удаляется по времени/дистанции
+    Vector2 lastPos{};       // предыдущая позиция Физички
+    Vector2 houndVelocity{}; // скорость только Физички
+    float stuckT{};            // время без заметного перемещения
+    int houndAction{};         // 0 = обычное состояние, 1 = удар, 2 = бросок
+    int textbookIndex{};           // 0..3: учебники 10, 9, 8, 7 классов
+    float actionT{};           // время текущей анимации атаки
+    float textbookBoostT{};        // оставшееся время ускорения после броска
+    bool textbookHeld{};           // учебник находится в руке Физички
+    bool actionEvent{};        // событие атаки уже сработало
 };
 
+// Проверка столкновения игрока с постоянной Физичкой.
+constexpr float HOUND_COLLISION_RADIUS = 0.225f;
+
+bool EntitiesCircleHitsPlayer(float x, float z, float playerRadius);
+
 void EntitiesReset();
+void EntitiesSetHoundRage(bool enabled);
 void EntitiesThrowBottle(Player& pl);
-void EntitiesUpdate(Player& pl, float dt, float insane);   // insane 0..1 - чем ниже рассудок, тем чаще спавн
-void EntitiesDraw(const Player& pl, bool glowPass);        // glowPass: светящиеся части (глаза, улыбки)
+void EntitiesUpdate(Player& pl, float dt, float insane, bool otherEntitiesEnabled); // Физичка не отключается
+void EntitiesDraw(const Player& pl, bool glowPass, Shader worldShader, bool otherEntitiesEnabled);
+void EntitiesUnload();        // glowPass: светящиеся части (глаза, улыбки)

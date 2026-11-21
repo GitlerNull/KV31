@@ -2,9 +2,12 @@
 // Структура: решётка комнат с периодом 4 клетки (3x3 внутри + стены/столбы по краям).
 // Каждый сегмент стены: глухой / с дверью в 1 клетку / открытый. Блоки 3x3 комнат иногда - "залы" без стен.
 #include "map_gen.h"
+#include "level2.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdlib>
+#include <algorithm>
+#include <array>
 
 static std::unordered_map<uint64_t, Chunk> gChunks;
 static std::unordered_set<uint64_t> gTaken;   // подобранные предметы (переживают выгрузку чанков)
@@ -31,6 +34,12 @@ static bool WallSegment(int rx, int ry, int k, bool horiz, bool hallInside) {
 }
 
 static bool GenSolid(int x, int y) {
+    // Фиксированная тёмная комната: room (1,0), внутренние клетки x=5..7, z=1..3.
+    // Периметр закрыт, кроме одного входа со стороны стартовой комнаты (4,2).
+    if (x >= 4 && x <= 8 && y >= 0 && y <= 4) {
+        if (x == 4 && y == 2) return false;
+        return x == 4 || x == 8 || y == 0 || y == 4;
+    }
     int mx = PosMod(x, 4), my = PosMod(y, 4), rx = FloorDiv(x, 4), ry = FloorDiv(y, 4);
     if (mx == 0 && my == 0) {                       // столб на углу четырёх комнат
         bool hall = SameHall(rx - 1, ry - 1, rx, ry - 1) && SameHall(rx - 1, ry, rx, ry) && SameHall(rx - 1, ry - 1, rx - 1, ry);
@@ -63,6 +72,7 @@ static Chunk& MakeChunk(int chx, int chz) {
         for (int x = 0; x < CHUNK; x++) {
             if (c.solid[z][x]) continue;
             int gx = chx * CHUNK + x, gz = chz * CHUNK + z;
+            if (gx >= 5 && gx <= 7 && gz >= 1 && gz <= 3) continue;     // в тёмной комнате только фиксированные аптечки
             if (abs(gx - 2) + abs(gz - 2) < 6) continue;                 // не у точки старта
             if (c.hasExit && gx == c.exitX && gz == c.exitZ) continue;
             float r = Rand01(gx, gz, 21);
@@ -71,6 +81,15 @@ static Chunk& MakeChunk(int chx, int chz) {
             if (gTaken.count(Key(gx, gz))) continue;
             c.items.push_back({gx, gz, t, false});
         }
+    // Три гарантированные аптечки в комнате с Гончей. gTaken сохраняет подбор
+    // даже после выгрузки и повторной генерации чанка.
+    const int medkitCells[3][2] = {{5, 2}, {6, 1}, {7, 2}};
+    for (const auto& cell : medkitCells) {
+        int gx = cell[0], gz = cell[1];
+        if (FloorDiv(gx, CHUNK) == chx && FloorDiv(gz, CHUNK) == chz && !gTaken.count(Key(gx, gz))) {
+            c.items.push_back({gx, gz, IT_MEDKIT, false});
+        }
+    }
     return c;
 }
 
@@ -80,6 +99,7 @@ Chunk& GetChunk(int chx, int chz) {
 }
 
 bool IsSolid(int cx, int cz) {
+    if (Level2IsActive()) return Level2IsSolid(cx, cz);
     int chx = FloorDiv(cx, CHUNK), chz = FloorDiv(cz, CHUNK);
     Chunk* c = gLast;
     if (!c || c->x != chx || c->z != chz) { c = &GetChunk(chx, chz); gLast = c; }
@@ -87,6 +107,7 @@ bool IsSolid(int cx, int cz) {
 }
 
 bool CircleHits(float x, float z, float r) {
+    if (Level2IsActive()) return Level2CircleHits(x, z, r);
     int x0 = CellOf(x - r), x1 = CellOf(x + r), z0 = CellOf(z - r), z1 = CellOf(z + r);
     for (int j = z0; j <= z1; j++) for (int i = x0; i <= x1; i++) if (IsSolid(i, j)) return true;
     return false;
@@ -102,19 +123,54 @@ bool LineClear(Vector2 a, Vector2 b) {
     return true;
 }
 
-// Лампа в центре каждой комнаты: целые сектора 5x5 комнат иногда обесточены ("тёмные зоны")
+// Кэш уровней ламп: соседние вершины часто запрашивают одни и те же комнаты.
+struct LampCacheEntry {
+    int rx = 0;
+    int ry = 0;
+    float value = 0.0f;
+    bool valid = false;
+};
+
+static std::array<LampCacheEntry, 4096> gLampCache{};
+
 float LampLevel(int rx, int ry) {
-    if (rx == 0 && ry == 0) return 1.0f;
-    int sx = FloorDiv(rx, 5), sy = FloorDiv(ry, 5);
-    if (!(sx == 0 && sy == 0) && Rand01(sx, sy, 42) < 0.20f) return 0.0f;
-    float r = Rand01(rx, ry, 41);
-    if (r < 0.08f) return 0.0f;     // перегоревшая
-    if (r < 0.20f) return 0.45f;    // тусклая
-    return 1.0f;
+    uint32_t h = (uint32_t)rx * 0x9E3779B1u;
+    h ^= (uint32_t)ry * 0x85EBCA77u;
+    h ^= h >> 16;
+    LampCacheEntry& entry = gLampCache[h & 4095u];
+
+    if (entry.valid && entry.rx == rx && entry.ry == ry)
+        return entry.value;
+
+    float value;
+    if (rx == 1 && ry == 0) {
+        value = 0.0f;
+    } else if (rx == 0 && ry == 0) {
+        value = 1.0f;
+    } else {
+        int sx = FloorDiv(rx, 5), sy = FloorDiv(ry, 5);
+        if (!(sx == 0 && sy == 0) && Rand01(sx, sy, 42) < 0.20f) {
+            value = 0.0f;
+        } else {
+            float r = Rand01(rx, ry, 41);
+            if (r < 0.10f) value = 0.0f;
+            else if (r < 0.27f) value = 0.38f;
+            else value = 1.0f;
+        }
+    }
+
+    entry.rx = rx;
+    entry.ry = ry;
+    entry.value = value;
+    entry.valid = true;
+    return value;
 }
 
 // Билинейная интерполяция яркости четырёх ближайших ламп -> плавные градиенты света и тьмы
 float LightAt(float wx, float wz) {
+    if (Level2IsActive()) return Level2LightAt(wx, wz);
+    int cx = CellOf(wx), cz = CellOf(wz);
+    if (cx >= 5 && cx <= 7 && cz >= 1 && cz <= 3) return 0.07f; // постоянная темнота внутри комнаты
     float u = (wx / CELL - 2.5f) / 4.0f, v = (wz / CELL - 2.5f) / 4.0f;
     int i = (int)floorf(u), j = (int)floorf(v);
     float tx = u - i, ty = v - j;
@@ -124,16 +180,26 @@ float LightAt(float wx, float wz) {
     return 0.07f + 0.93f * l;
 }
 
-void MapUpdate(float px, float pz) {
-    if (gChunks.size() <= 96) return;
+void MapUpdate(float px, float pz, int keepChunks) {
+    if (Level2IsActive()) return;
+    // Оставляем радиус прорисовки плюс один буферный чанк для предметов и границ.
+    keepChunks = std::max(2, std::min(6, keepChunks));
+    const size_t maxCached = (size_t)(2 * keepChunks + 1) * (size_t)(2 * keepChunks + 1) + 16;
+    if (gChunks.size() <= maxCached) return;
     int pcx = FloorDiv(CellOf(px), CHUNK), pcz = FloorDiv(CellOf(pz), CHUNK);
     for (auto it = gChunks.begin(); it != gChunks.end();) {
-        if (abs(it->second.x - pcx) > 3 || abs(it->second.z - pcz) > 3) it = gChunks.erase(it); else ++it;
+        if (abs(it->second.x - pcx) > keepChunks || abs(it->second.z - pcz) > keepChunks) it = gChunks.erase(it); else ++it;
     }
     gLast = nullptr;
 }
 
-void MapReset(uint32_t seed) { gSeed = seed; gChunks.clear(); gTaken.clear(); gLast = nullptr; }
+void MapReset(uint32_t seed) {
+    gSeed = seed;
+    gChunks.clear();
+    gTaken.clear();
+    gLast = nullptr;
+    for (auto& entry : gLampCache) entry.valid = false;
+}
 
 bool IsExitCell(int cx, int cz) {
     int ex, ez;

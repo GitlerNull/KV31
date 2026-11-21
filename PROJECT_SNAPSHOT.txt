@@ -1,0 +1,32 @@
+KV31 — COMPLETE SOURCE PACKAGE
+
+Git commit:
+fe7b1c36e266d6ed3fbf963b0ce8cc788ee251c4
+
+Branch:
+lighting-fix-test-20261117
+
+Remote:
+https://github.com/GitlerNull/KV31.git
+
+Snapshot date:
+Fri Nov 20 20:00:12 MSK 2026
+
+Package contents:
+- Android application source
+- C++ game engine and Level 2 implementation
+- Kotlin Android integration
+- GLB models and animations
+- Level 0 and Level 2 textures
+- Portable generator model and textures
+- Android resources and build configuration
+- GitHub Actions workflow
+- Russian project documentation
+- Additional CSV data
+- Development utility scripts
+
+Excluded:
+- APK binaries
+- Git repository metadata
+- Backup and temporary files
+- Unexplained ion.sdk binary

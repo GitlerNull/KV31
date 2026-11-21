@@ -4,12 +4,12 @@ plugins {
 }
 
 android {
-    namespace 'mopok.dev.backrooms'
+    namespace 'dev.morok.backrooms'
     compileSdk 34
     ndkVersion '26.1.10909125'
 
     defaultConfig {
-        applicationId "mopok.dev.backrooms"
+        applicationId "dev.morok.backrooms"
         minSdk 24
         targetSdk 34
         versionCode 1
