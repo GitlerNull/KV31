@@ -44,7 +44,8 @@ void Scene::Quad(Tex t, const V3 p[4], const float u[4], const float v[4], Rgb t
         if (l < lightMin) l = lightMin;
         Vtx vt;
         vt.x = p[i].x; vt.y = p[i].y; vt.z = p[i].z; vt.u = u[i]; vt.v = v[i];
-        vt.r = tint.r; vt.g = tint.g; vt.b = tint.b;
+        const Rgb tc = tint_ ? tint_(p[i].x, p[i].y, p[i].z, tint) : tint;
+        vt.r = tc.r; vt.g = tc.g; vt.b = tc.b;
         vt.a = (uint8_t)(Clamp01(l) * 255.0f + 0.5f);
         b.quads.push_back(vt);
     }
@@ -255,6 +256,97 @@ void AtlasSlotRect(int slot, float* u0, float* v0, float* u1, float* v1) {
 }
 
 // ======================= Плесневая стрелка =======================
+struct Drip { float x, y, len, w; };
+struct Blob { float x, y, r; };
+// Рисует «плесень» по набору штрихов, подтёков и пятен поверх основы. Общая часть для стрелок и смайлика.
+static void PaintMold(Pixmap& base, std::vector<Stroke>& strokes, const std::vector<Drip>& drips, const std::vector<Blob>& blobs, uint32_t seed) {
+    const int W = base.w, H = base.h;
+    // Общая рамка влияния: пиксели вне неё не меняются (экономит большую часть работы).
+    float bx0 = 1e9f, bx1 = -1e9f, by0 = 1e9f, by1 = -1e9f, reach = 0;
+    for (const Stroke& s : strokes) { bx0 = std::min(bx0, s.minx); bx1 = std::max(bx1, s.maxx); by0 = std::min(by0, s.miny); by1 = std::max(by1, s.maxy); reach = std::max(reach, s.maxw); }
+    for (const Drip& d : drips) { bx0 = std::min(bx0, d.x - 8); bx1 = std::max(bx1, d.x + 8); by1 = std::max(by1, d.y + d.len + 6); }
+    for (const Blob& b : blobs) { bx0 = std::min(bx0, b.x - b.r - 3); bx1 = std::max(bx1, b.x + b.r + 3); by0 = std::min(by0, b.y - b.r - 3); by1 = std::max(by1, b.y + b.r + 3); }
+    const float margin = 4.6f * reach + 22.0f;
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            float fx = (float)x, fy = (float)y;
+            if (fx < bx0 - margin || fx > bx1 + margin || fy < by0 - margin || fy > by1 + margin) continue;
+            // слабое искажение координат даёт «живой» неровный край
+            float wx = fx + (Fbm(fx * 0.035f, fy * 0.035f, seed + 3, 3) - 0.5f) * 20.0f;
+            float wy = fy + (Fbm(fx * 0.035f + 9.0f, fy * 0.035f, seed + 4, 3) - 0.5f) * 20.0f;
+            float best = 1e9f;
+            for (const Stroke& s : strokes) best = std::min(best, s.NormDist(wx, wy));
+            float edgeNoise = Fbm(fx * 0.16f, fy * 0.16f, seed + 7, 3) - 0.5f;
+            float core = SmoothStep(0.0f, 0.42f, (1.08f - best) + edgeNoise * 0.95f);
+            // подтёки и пятна
+            float extra = 0.0f;
+            for (const Drip& d : drips) {
+                float t; float dd = DistSeg(wx, wy, d.x, d.y, d.x + (VNoise(d.y, 1, seed) - 0.5f) * 6.0f, d.y + d.len, &t);
+                float w = d.w * (1.0f - 0.7f * t);
+                extra = std::max(extra, SmoothStep(w + 1.2f, w * 0.5f, dd));
+            }
+            for (const Blob& b : blobs) {
+                float dd = hypotf(wx - b.x, wy - b.y);
+                extra = std::max(extra, SmoothStep(b.r + 1.5f, b.r * 0.4f, dd) * (0.55f + 0.45f * edgeNoise * 2.0f));
+            }
+            if (best > 4.6f && extra < 0.01f) continue;   // вне штриха, подтёков и каймы
+            // споровая кайма: мелкая зернистая тень вокруг штриха
+            float fringe = SmoothStep(3.1f, 1.0f, best) * SmoothStep(0.52f, 0.80f, VNoise(fx * 0.55f, fy * 0.55f, seed + 17) + 0.25f * edgeNoise) * 0.55f;
+            float halo = 0.30f * SmoothStep(4.5f, 1.2f, best) * (0.5f + Fbm(fx * 0.05f, fy * 0.05f, seed + 29, 2));
+            float alpha = Clamp01(std::max(std::max(core, extra), fringe)) * 0.96f;
+            uint8_t* px = base.At(x, y);
+            // сначала расплывшееся потемнение бетона
+            BlendPixel(px, px[0] * 0.55f, px[1] * 0.58f, px[2] * 0.56f, halo);
+            float tone = Fbm(fx * 0.09f, fy * 0.09f, seed + 41, 2);
+            BlendPixel(px, 9.0f + 16.0f * tone, 12.0f + 16.0f * tone, 11.0f + 13.0f * tone, alpha);
+        }
+    }
+}
+
+
+// Чёрный смайлик «=)» на стене: «=» слева (две неровные перекладины) и «)» справа (дуга). Размер ~0.8 x 0.6 м.
+void ComposeMoldSmiley(Pixmap& base, uint32_t seed) {
+    const int W = base.w, H = base.h;
+    Rng rng(seed);
+    std::vector<Stroke> strokes;
+    auto addStroke = [&](std::initializer_list<float> pts, float w0, float w1, uint32_t sd) {
+        Stroke s; s.seed = sd; s.w0 = w0; s.w1 = w1;
+        std::vector<float> p(pts);
+        const int sub = 10;   // подразбиваем отрезки и слегка «дрожим» - рука с кистью/плесень
+        for (size_t i = 0; i + 3 < p.size(); i += 2) {
+            for (int k = 0; k < sub; ++k) {
+                const float t = (float)k / sub;
+                s.x.push_back(p[i] + (p[i + 2] - p[i]) * t + (VNoise(p[i] * 0.05f + k, 2.1f, sd) - 0.5f) * 6.0f);
+                s.y.push_back(p[i + 1] + (p[i + 3] - p[i + 1]) * t + (VNoise(p[i + 1] * 0.05f + k, 7.3f, sd) - 0.5f) * 6.0f);
+            }
+        }
+        s.x.push_back(p[p.size() - 2]); s.y.push_back(p[p.size() - 1]);
+        s.Finalize();
+        strokes.push_back(s);
+    };
+    const float cx = W * 0.5f, cy = H * 0.5f + rng.Range(-10.0f, 10.0f);
+    // «=»: два штриха одинаковой длины
+    addStroke({cx - 150.0f, cy - 48.0f, cx - 20.0f, cy - 52.0f}, 15.0f, 19.0f, seed + 1);
+    addStroke({cx - 152.0f, cy + 50.0f, cx - 22.0f, cy + 46.0f}, 15.0f, 19.0f, seed + 2);
+    // «)»: дуга справа
+    addStroke({cx + 55.0f, cy - 120.0f, cx + 105.0f, cy - 82.0f, cx + 132.0f, cy - 30.0f, cx + 134.0f, cy + 28.0f,
+               cx + 112.0f, cy + 84.0f, cx + 62.0f, cy + 124.0f}, 14.0f, 18.0f, seed + 3);
+    std::vector<Drip> drips;
+    for (int i = 0; i < 5; ++i) {
+        const Stroke& sh = strokes[(size_t)(rng.Next() * 3) % 3];
+        const size_t idx = (size_t)(rng.Range(0.1f, 0.9f) * (sh.x.size() - 1));
+        drips.push_back({sh.x[idx] + rng.Range(-4, 4), sh.y[idx], rng.Range(25.0f, 85.0f), rng.Range(1.8f, 3.4f)});
+    }
+    std::vector<Blob> blobs;
+    for (int i = 0; i < 16; ++i) {
+        const Stroke& sh = strokes[(size_t)(rng.Next() * 3) % 3];
+        const size_t idx = (size_t)(rng.Next() * (sh.x.size() - 1));
+        const float ang = rng.Range(0.0f, 6.2831f), dist = rng.Range(14.0f, 70.0f);
+        blobs.push_back({sh.x[idx] + cosf(ang) * dist, sh.y[idx] + sinf(ang) * dist, rng.Range(1.6f, 5.5f)});
+    }
+    PaintMold(base, strokes, drips, blobs, seed);
+}
+
 void ComposeMoldArrow(Pixmap& base, uint32_t seed, bool pointRight) {
     const int W = base.w, H = base.h;
     Rng rng(seed);
@@ -300,7 +392,6 @@ void ComposeMoldArrow(Pixmap& base, uint32_t seed, bool pointRight) {
     }
 
     // Подтёки: короткие вертикальные «слёзы» из нескольких точек ствола.
-    struct Drip { float x, y, len, w; };
     std::vector<Drip> drips;
     for (int i = 0; i < 4; ++i) {
         const Stroke& sh = strokes[0];
@@ -308,7 +399,6 @@ void ComposeMoldArrow(Pixmap& base, uint32_t seed, bool pointRight) {
         drips.push_back({sh.x[idx] + rng.Range(-6, 6), sh.y[idx], rng.Range(22.0f, 78.0f), rng.Range(1.6f, 3.2f)});
     }
     // Спутниковые пятна.
-    struct Blob { float x, y, r; };
     std::vector<Blob> blobs;
     for (int i = 0; i < 22; ++i) {
         const Stroke& sh = strokes[(size_t)(rng.Next() * 3) % 3];
@@ -317,46 +407,7 @@ void ComposeMoldArrow(Pixmap& base, uint32_t seed, bool pointRight) {
         blobs.push_back({sh.x[idx] + cosf(ang) * dist, sh.y[idx] + sinf(ang) * dist, rng.Range(1.6f, 6.5f)});
     }
 
-    // Общая рамка влияния: пиксели вне неё не меняются (экономит большую часть работы).
-    float bx0 = 1e9f, bx1 = -1e9f, by0 = 1e9f, by1 = -1e9f, reach = 0;
-    for (const Stroke& s : strokes) { bx0 = std::min(bx0, s.minx); bx1 = std::max(bx1, s.maxx); by0 = std::min(by0, s.miny); by1 = std::max(by1, s.maxy); reach = std::max(reach, s.maxw); }
-    for (const Drip& d : drips) { bx0 = std::min(bx0, d.x - 8); bx1 = std::max(bx1, d.x + 8); by1 = std::max(by1, d.y + d.len + 6); }
-    for (const Blob& b : blobs) { bx0 = std::min(bx0, b.x - b.r - 3); bx1 = std::max(bx1, b.x + b.r + 3); by0 = std::min(by0, b.y - b.r - 3); by1 = std::max(by1, b.y + b.r + 3); }
-    const float margin = 4.6f * reach + 22.0f;
-    for (int y = 0; y < H; ++y) {
-        for (int x = 0; x < W; ++x) {
-            float fx = (float)x, fy = (float)y;
-            if (fx < bx0 - margin || fx > bx1 + margin || fy < by0 - margin || fy > by1 + margin) continue;
-            // слабое искажение координат даёт «живой» неровный край
-            float wx = fx + (Fbm(fx * 0.035f, fy * 0.035f, seed + 3, 3) - 0.5f) * 20.0f;
-            float wy = fy + (Fbm(fx * 0.035f + 9.0f, fy * 0.035f, seed + 4, 3) - 0.5f) * 20.0f;
-            float best = 1e9f;
-            for (const Stroke& s : strokes) best = std::min(best, s.NormDist(wx, wy));
-            float edgeNoise = Fbm(fx * 0.16f, fy * 0.16f, seed + 7, 3) - 0.5f;
-            float core = SmoothStep(0.0f, 0.42f, (1.08f - best) + edgeNoise * 0.95f);
-            // подтёки и пятна
-            float extra = 0.0f;
-            for (const Drip& d : drips) {
-                float t; float dd = DistSeg(wx, wy, d.x, d.y, d.x + (VNoise(d.y, 1, seed) - 0.5f) * 6.0f, d.y + d.len, &t);
-                float w = d.w * (1.0f - 0.7f * t);
-                extra = std::max(extra, SmoothStep(w + 1.2f, w * 0.5f, dd));
-            }
-            for (const Blob& b : blobs) {
-                float dd = hypotf(wx - b.x, wy - b.y);
-                extra = std::max(extra, SmoothStep(b.r + 1.5f, b.r * 0.4f, dd) * (0.55f + 0.45f * edgeNoise * 2.0f));
-            }
-            if (best > 4.6f && extra < 0.01f) continue;   // вне штриха, подтёков и каймы
-            // споровая кайма: мелкая зернистая тень вокруг штриха
-            float fringe = SmoothStep(3.1f, 1.0f, best) * SmoothStep(0.52f, 0.80f, VNoise(fx * 0.55f, fy * 0.55f, seed + 17) + 0.25f * edgeNoise) * 0.55f;
-            float halo = 0.30f * SmoothStep(4.5f, 1.2f, best) * (0.5f + Fbm(fx * 0.05f, fy * 0.05f, seed + 29, 2));
-            float alpha = Clamp01(std::max(std::max(core, extra), fringe)) * 0.96f;
-            uint8_t* px = base.At(x, y);
-            // сначала расплывшееся потемнение бетона
-            BlendPixel(px, px[0] * 0.55f, px[1] * 0.58f, px[2] * 0.56f, halo);
-            float tone = Fbm(fx * 0.09f, fy * 0.09f, seed + 41, 2);
-            BlendPixel(px, 9.0f + 16.0f * tone, 12.0f + 16.0f * tone, 11.0f + 13.0f * tone, alpha);
-        }
-    }
+    PaintMold(base, strokes, drips, blobs, seed);
 }
 
 // ======================= Следы крови =======================
@@ -437,12 +488,12 @@ void ComposeFloorBlood(Pixmap& base, int variant, uint32_t seed) {
     }
 }
 
-// ======================= Векторный шрифт =======================
+// ======================= Векторный шрифт (UTF-8: латиница и кириллица) =======================
 namespace {
 struct Seg { float x0, y0, x1, y1; };
-struct Glyph { char c; std::vector<Seg> s; };
+struct Glyph { uint32_t c; float w; std::vector<Seg> s; };
 
-// Контуры букв в коробке w = 0.6, h = 1.0 (y вниз). Ломаные записаны точками, соседние точки соединяются.
+// Контуры букв в коробке w x 1.0 (y вниз). Ломаные записаны точками, соседние точки соединяются.
 static void PolyToSegs(std::vector<Seg>& out, std::initializer_list<float> pts) {
     std::vector<float> p(pts);
     for (size_t i = 0; i + 3 < p.size(); i += 2) out.push_back({p[i], p[i + 1], p[i + 2], p[i + 3]});
@@ -450,43 +501,70 @@ static void PolyToSegs(std::vector<Seg>& out, std::initializer_list<float> pts) 
 static const std::vector<Glyph>& Glyphs() {
     static std::vector<Glyph> g;
     if (!g.empty()) return g;
-    auto add = [&](char c, std::vector<std::initializer_list<float>> polys) {
-        Glyph gl; gl.c = c;
+    auto add = [&](uint32_t c, float w, std::vector<std::initializer_list<float>> polys) {
+        Glyph gl; gl.c = c; gl.w = w;
         for (auto& p : polys) PolyToSegs(gl.s, p);
         g.push_back(gl);
     };
-    add('F', {{0, 1, 0, 0, 0.55f, 0}, {0, 0.5f, 0.45f, 0.5f}});
-    add('I', {{0.12f, 0, 0.48f, 0}, {0.30f, 0, 0.30f, 1}, {0.12f, 1, 0.48f, 1}});
-    add('R', {{0, 1, 0, 0, 0.42f, 0, 0.55f, 0.08f, 0.55f, 0.38f, 0.42f, 0.5f, 0, 0.5f}, {0.28f, 0.5f, 0.58f, 1}});
-    add('E', {{0.55f, 0, 0, 0, 0, 1, 0.55f, 1}, {0, 0.5f, 0.42f, 0.5f}});
-    add('X', {{0, 0, 0.6f, 1}, {0.6f, 0, 0, 1}});
-    add('T', {{0, 0, 0.6f, 0}, {0.3f, 0, 0.3f, 1}});
-    add('K', {{0, 0, 0, 1}, {0.55f, 0, 0, 0.55f}, {0.15f, 0.42f, 0.6f, 1}});
-    add('P', {{0, 1, 0, 0, 0.42f, 0, 0.55f, 0.08f, 0.55f, 0.4f, 0.42f, 0.5f, 0, 0.5f}});
-    add('C', {{0.55f, 0.15f, 0.45f, 0.03f, 0.3f, 0, 0.12f, 0.04f, 0.02f, 0.2f, 0, 0.5f, 0.02f, 0.8f, 0.12f, 0.96f, 0.3f, 1, 0.45f, 0.97f, 0.55f, 0.85f}});
-    add('L', {{0, 0, 0, 1, 0.55f, 1}});
-    add('A', {{0, 1, 0.3f, 0, 0.6f, 1}, {0.12f, 0.65f, 0.48f, 0.65f}});
-    add('V', {{0, 0, 0.3f, 1, 0.6f, 0}});
-    add('0', {{0.3f, 0, 0.5f, 0.1f, 0.58f, 0.35f, 0.58f, 0.65f, 0.5f, 0.9f, 0.3f, 1, 0.1f, 0.9f, 0.02f, 0.65f, 0.02f, 0.35f, 0.1f, 0.1f, 0.3f, 0}});
+    auto alias = [&](uint32_t c, uint32_t as) { for (size_t i = 0; i < g.size(); ++i) if (g[i].c == as) { Glyph gl = g[i]; gl.c = c; g.push_back(gl); break; } };
+    add('F', 0.6f, {{0, 1, 0, 0, 0.55f, 0}, {0, 0.5f, 0.45f, 0.5f}});
+    add('I', 0.6f, {{0.12f, 0, 0.48f, 0}, {0.30f, 0, 0.30f, 1}, {0.12f, 1, 0.48f, 1}});
+    add('R', 0.6f, {{0, 1, 0, 0, 0.42f, 0, 0.55f, 0.08f, 0.55f, 0.38f, 0.42f, 0.5f, 0, 0.5f}, {0.28f, 0.5f, 0.58f, 1}});
+    add('E', 0.6f, {{0.55f, 0, 0, 0, 0, 1, 0.55f, 1}, {0, 0.5f, 0.42f, 0.5f}});
+    add('X', 0.6f, {{0, 0, 0.6f, 1}, {0.6f, 0, 0, 1}});
+    add('T', 0.6f, {{0, 0, 0.6f, 0}, {0.3f, 0, 0.3f, 1}});
+    add('K', 0.6f, {{0, 0, 0, 1}, {0.55f, 0, 0, 0.55f}, {0.15f, 0.42f, 0.6f, 1}});
+    add('P', 0.6f, {{0, 1, 0, 0, 0.42f, 0, 0.55f, 0.08f, 0.55f, 0.4f, 0.42f, 0.5f, 0, 0.5f}});
+    add('C', 0.6f, {{0.55f, 0.15f, 0.45f, 0.03f, 0.3f, 0, 0.12f, 0.04f, 0.02f, 0.2f, 0, 0.5f, 0.02f, 0.8f, 0.12f, 0.96f, 0.3f, 1, 0.45f, 0.97f, 0.55f, 0.85f}});
+    add('L', 0.6f, {{0, 0, 0, 1, 0.55f, 1}});
+    add('A', 0.6f, {{0, 1, 0.3f, 0, 0.6f, 1}, {0.12f, 0.65f, 0.48f, 0.65f}});
+    add('V', 0.6f, {{0, 0, 0.3f, 1, 0.6f, 0}});
+    add('0', 0.6f, {{0.3f, 0, 0.5f, 0.1f, 0.58f, 0.35f, 0.58f, 0.65f, 0.5f, 0.9f, 0.3f, 1, 0.1f, 0.9f, 0.02f, 0.65f, 0.02f, 0.35f, 0.1f, 0.1f, 0.3f, 0}});
+    // Кириллица. А, Е, Р, Х, О совпадают по начертанию с латиницей.
+    alias(0x0410, 'A'); alias(0x0415, 'E'); alias(0x0420, 'P'); alias(0x0425, 'X'); alias(0x041E, '0');
+    add(0x0412, 0.6f, {{0, 1, 0, 0, 0.40f, 0, 0.52f, 0.07f, 0.52f, 0.40f, 0.40f, 0.48f, 0, 0.48f},
+                       {0.40f, 0.48f, 0.56f, 0.58f, 0.56f, 0.92f, 0.44f, 1, 0, 1}});                       // В
+    add(0x0414, 0.66f, {{0.12f, 0, 0.62f, 0}, {0.20f, 0, 0.12f, 0.84f}, {0.54f, 0, 0.54f, 0.84f},
+                        {0.02f, 0.84f, 0.64f, 0.84f}, {0.02f, 0.84f, 0.02f, 1}, {0.64f, 0.84f, 0.64f, 1}}); // Д
+    add(0x0417, 0.6f, {{0.02f, 0.1f, 0.15f, 0.02f, 0.4f, 0, 0.54f, 0.1f, 0.55f, 0.36f, 0.4f, 0.47f, 0.22f, 0.48f},
+                       {0.4f, 0.47f, 0.56f, 0.58f, 0.57f, 0.88f, 0.42f, 0.99f, 0.15f, 1, 0.02f, 0.92f}});   // З
+    add(0x042C, 0.6f, {{0, 0, 0, 1}, {0, 0.44f, 0.40f, 0.44f, 0.55f, 0.56f, 0.55f, 0.88f, 0.42f, 1, 0, 1}});  // Ь
+    add(0x042B, 0.8f, {{0, 0, 0, 1}, {0, 0.44f, 0.36f, 0.44f, 0.48f, 0.56f, 0.48f, 0.88f, 0.36f, 1, 0, 1},
+                       {0.72f, 0, 0.72f, 1}});                                                              // Ы
+    add(0x042E, 0.8f, {{0, 0, 0, 1}, {0, 0.5f, 0.26f, 0.5f},
+                       {0.52f, 0, 0.68f, 0.08f, 0.76f, 0.3f, 0.76f, 0.7f, 0.68f, 0.92f, 0.52f, 1, 0.36f, 0.92f, 0.28f, 0.7f, 0.28f, 0.3f, 0.36f, 0.08f, 0.52f, 0}}); // Ю
     return g;
 }
-const float GLYPH_W = 0.6f, GLYPH_GAP = 0.30f, SPACE_W = 0.45f;
+const float GLYPH_GAP = 0.30f, SPACE_W = 0.45f;
+
+// Разбор UTF-8 в кодовые точки (достаточно 1-2 байтов: латиница и кириллица).
+static std::vector<uint32_t> Decode(const char* text) {
+    std::vector<uint32_t> out;
+    for (const unsigned char* p = (const unsigned char*)text; *p; ) {
+        if (*p < 0x80) { out.push_back(*p); p += 1; }
+        else if ((*p & 0xE0) == 0xC0 && p[1]) { out.push_back(((*p & 0x1F) << 6) | (p[1] & 0x3F)); p += 2; }
+        else { p += 1; }
+    }
+    return out;
+}
+static const Glyph* FindGlyph(uint32_t c) { for (const Glyph& g : Glyphs()) if (g.c == c) return &g; return nullptr; }
 }
 
 float TextWidth(const char* text, float height) {
     float w = 0.0f;
-    for (const char* c = text; *c; ++c) {
-        w += (*c == ' ') ? SPACE_W * height : (GLYPH_W + GLYPH_GAP) * height;
+    for (uint32_t c : Decode(text)) {
+        if (c == ' ') { w += SPACE_W * height; continue; }
+        const Glyph* g = FindGlyph(c);
+        w += ((g ? g->w : 0.6f) + GLYPH_GAP) * height;
     }
     return w > 0 ? w - GLYPH_GAP * height : 0.0f;
 }
 
 void DrawText(Pixmap& img, const char* text, float x, float y, float height, float stroke, Rgb color) {
     float penX = x;
-    for (const char* c = text; *c; ++c) {
-        if (*c == ' ') { penX += SPACE_W * height; continue; }
-        const Glyph* gl = nullptr;
-        for (const Glyph& g : Glyphs()) if (g.c == *c) { gl = &g; break; }
+    for (uint32_t c : Decode(text)) {
+        if (c == ' ') { penX += SPACE_W * height; continue; }
+        const Glyph* gl = FindGlyph(c);
         if (gl) {
             for (const Seg& s : gl->s) {
                 float ax = penX + s.x0 * height, ay = y + s.y0 * height, bx = penX + s.x1 * height, by = y + s.y1 * height;
@@ -499,17 +577,18 @@ void DrawText(Pixmap& img, const char* text, float x, float y, float height, flo
                 }
             }
         }
-        penX += (GLYPH_W + GLYPH_GAP) * height;
+        penX += ((gl ? gl->w : 0.6f) + GLYPH_GAP) * height;
     }
 }
 
 void MakeSign(Pixmap& out, int kind) {
-    out.Resize(768, 256);
+    out.Resize(768, kind == 2 ? 448 : 256);        // табличка ложной двери выше: три строки крупным шрифтом
     const int W = out.w, H = out.h;
-    Rgb bg, border, fg; const char* text; float th, st;
-    if (kind == 0)      { bg = {22, 96, 54};  border = {236, 241, 232}; fg = {244, 247, 240}; text = "FIRE EXIT";  th = 118; st = 15; }
-    else if (kind == 1) { bg = {216, 174, 26}; border = {20, 19, 16};   fg = {22, 20, 16};    text = "KEEP CLEAR"; th = 96;  st = 13; }
-    else                { bg = {30, 44, 60};  border = {128, 188, 234}; fg = {152, 212, 255}; text = "LEVEL 0";    th = 108; st = 14; }
+    Rgb bg, border, fg; const char* line1; const char* line2 = nullptr; const char* line3 = nullptr; float th, st;
+    if (kind == 0)      { bg = {22, 96, 54};   border = {236, 241, 232}; fg = {244, 247, 240}; line1 = "FIRE EXIT";  th = 118; st = 15; }
+    else if (kind == 1) { bg = {216, 174, 26}; border = {20, 19, 16};    fg = {22, 20, 16};    line1 = "KEEP CLEAR"; th = 96;  st = 13; }
+    else if (kind == 2) { bg = {30, 44, 60};   border = {128, 188, 234}; fg = {152, 212, 255}; line1 = "\xD0\x92\xD0\xAB\xD0\xA5\xD0\x9E\xD0\x94"; line2 = "\xD0\x97\xD0\x90"; line3 = "\xD0\x94\xD0\x92\xD0\x95\xD0\xA0\xD0\xAC\xD0\xAE"; th = 118; st = 14; }   // ВЫХОД / ЗА / ДВЕРЬЮ
+    else                { bg = {22, 96, 54};   border = {236, 241, 232}; fg = {244, 247, 240}; line1 = "\xD0\x92\xD0\xAB\xD0\xA5\xD0\x9E\xD0\x94"; th = 124; st = 16; }   // ВЫХОД
     for (int y = 0; y < H; ++y) for (int x = 0; x < W; ++x) {
         uint8_t* p = out.At(x, y);
         bool edge = x < 12 || y < 12 || x >= W - 12 || y >= H - 12;
@@ -523,10 +602,18 @@ void MakeSign(Pixmap& out, int kind) {
         float grain = 0.93f + 0.07f * VNoise(x * 0.4f, y * 0.4f, 77);   // лёгкая «эмалевая» зернистость
         p[0] = (uint8_t)(c.r * grain); p[1] = (uint8_t)(c.g * grain); p[2] = (uint8_t)(c.b * grain); p[3] = 255;
     }
-    float tw = TextWidth(text, th);
     const float maxW = (float)W - 110.0f;               // текст обязан целиком помещаться внутри рамки таблички
-    if (tw > maxW) { const float k = maxW / tw; th *= k; st *= k; tw = TextWidth(text, th); }
-    DrawText(out, text, (W - tw) * 0.5f, (H - th) * 0.5f, th, st, fg);
+    auto fit = [&](const char* t, float* h, float* s) { float tw = TextWidth(t, *h); if (tw > maxW) { float k = maxW / tw; *h *= k; *s *= k; } };
+    if (line3) {         // «ВЫХОД ЗА ДВЕРЬЮ» тремя строками одного размера
+        float h1 = th, s1 = st, h3 = th, s3 = st; fit(line1, &h1, &s1); fit(line3, &h3, &s3);
+        const float hh = std::min(h1, h3), ss = std::min(s1, s3), gap = hh * 0.22f, total = hh * 3 + gap * 2, top = (H - total) * 0.5f;
+        DrawText(out, line1, (W - TextWidth(line1, hh)) * 0.5f, top, hh, ss, fg);
+        DrawText(out, line2, (W - TextWidth(line2, hh)) * 0.5f, top + hh + gap, hh, ss, fg);
+        DrawText(out, line3, (W - TextWidth(line3, hh)) * 0.5f, top + (hh + gap) * 2, hh, ss, fg);
+    } else {
+        fit(line1, &th, &st);
+        DrawText(out, line1, (W - TextWidth(line1, th)) * 0.5f, (H - th) * 0.5f, th, st, fg);
+    }
 }
 
 } // namespace l2g

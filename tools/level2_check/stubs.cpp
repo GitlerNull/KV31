@@ -12,6 +12,9 @@ Vector3 gOrg = {0, 0, 0};
 bool gRu = false;
 void Say(const char* m, float) { std::printf("  [Say] %s\n", m); }
 void Haptic(int) {}
+void Sfx(SfxId, float, float) {}
+int gTrapReleaseCalls = 0; bool gTrapReleasePlace = false; float gTrapRelX = 0, gTrapRelZ = 0;
+void EntitiesTrapRelease(float x, float z, bool place) { ++gTrapReleaseCalls; gTrapReleasePlace = place; gTrapRelX = x; gTrapRelZ = z; }
 struct Img { int w = 0, h = 0; std::vector<unsigned char> px; };
 static std::map<unsigned, Img> gTextures;
 static unsigned gNext = 1;

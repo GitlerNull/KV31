@@ -978,6 +978,24 @@ void EntitiesSetHoundRage(bool enabled) {
     }
 }
 
+// Ловушка аварийной двери (Level 2): Физичка выходит из ложной двери в конце лестницы (place=true) либо просто
+// активируется на текущем месте (place=false, игрок остался снаружи). Это скриптовое событие за закрытой дверью,
+// не перемещение на глазах игрока; поведение Level 0 не затрагивается.
+void EntitiesTrapRelease(float x, float z, bool place) {
+    if (!Level2IsActive()) return;
+    for (Entity& e : gE) if (e.type==E_HOUND) {
+        if (place) {
+            e.pos={x,z}; e.lastPos=e.pos; e.wp=e.pos; e.target=e.pos;
+            e.houndVelocity={0.0f,0.0f}; e.stuckT=0.0f; e.pathT=0.0f;
+            e.houndAction=0; e.actionT=0.0f; e.actionEvent=false;
+            e.stunT=0.0f;
+            e.throwCd=std::max(e.throwCd,1.2f);       // не бросает учебник в первую же секунду
+        }
+        e.st=S_CHASE; e.lose=0.0f;
+        e.timer=0.0f;
+    }
+}
+
 void EntitiesReset() {
     gE.clear();
     gFlying.clear();

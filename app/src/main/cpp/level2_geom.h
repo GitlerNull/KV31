@@ -23,7 +23,7 @@ struct Vtx { float x, y, z, u, v; uint8_t r, g, b, a; };
 // Слоты текстур. Конкретные GL-id подставляет level2.cpp при отрисовке.
 enum Tex : uint8_t {
     TEX_NONE, TEX_CONCRETE_A, TEX_CONCRETE_B, TEX_METAL, TEX_ATLAS,
-    TEX_FLOOR_BLOOD_A, TEX_FLOOR_BLOOD_B, TEX_SIGN_FIRE, TEX_SIGN_KEEP, TEX_SIGN_LEVEL0, TEX_COUNT
+    TEX_FLOOR_BLOOD_A, TEX_FLOOR_BLOOD_B, TEX_SIGN_FIRE, TEX_SIGN_KEEP, TEX_SIGN_LURE, TEX_SIGN_EXIT, TEX_COUNT
 };
 
 struct Rgb { uint8_t r, g, b; };
@@ -40,6 +40,9 @@ struct QuadRecord { Tex tex; V3 p[4]; float u[4], v[4]; int tag; };
 class Scene {
 public:
     typedef float (*LightFn)(float x, float z);
+    // Необязательная поправка оттенка материала по положению вершины (голубой/красный отсвет вокруг лампы в проходе).
+    typedef Rgb (*TintFn)(float x, float y, float z, Rgb in);
+    void SetTintFn(TintFn f) { tint_ = f; }
     void Init(float worldW, float worldD, LightFn light);
     void Clear();
     int  TilesX() const { return tx_; }
@@ -71,6 +74,7 @@ private:
     float tileW_ = 0, tileD_ = 0; int tx_ = 0, tz_ = 0;
     std::vector<Tile> tiles_;
     LightFn light_ = nullptr;
+    TintFn tint_ = nullptr;
     size_t quadCount_ = 0;
     bool record_ = false;
     std::vector<QuadRecord> records_;
@@ -92,19 +96,22 @@ constexpr int ATLAS_W = 2048, ATLAS_H = 1024;
 constexpr int ATLAS_COLS = 4;
 // Слоты атласа: стрелки вправо (0..2), влево (3..5 - 3 в первой строке, 4..5 во второй), кровь на стене (6).
 constexpr int ATLAS_ARROW_R0 = 0, ATLAS_ARROW_R1 = 1, ATLAS_ARROW_R2 = 2, ATLAS_ARROW_L0 = 3,
-              ATLAS_ARROW_L1 = 4, ATLAS_ARROW_L2 = 5, ATLAS_WALL_BLOOD = 6, ATLAS_SLOTS = 7;
+              ATLAS_ARROW_L1 = 4, ATLAS_ARROW_L2 = 5, ATLAS_WALL_BLOOD = 6, ATLAS_SMILEY = 7, ATLAS_SLOTS = 8;
 
 void AtlasSlotRect(int slot, float* u0, float* v0, float* u1, float* v1);   // УФ-прямоугольник слота
 void AtlasSlotOrigin(int slot, int* px, int* py);
 
 // Накладывает на base (WALL_TILE_W x WALL_TILE_H) стрелку из чёрной плесени. pointRight: острие в сторону +u.
 void ComposeMoldArrow(Pixmap& base, uint32_t seed, bool pointRight);
+// Чёрный смайлик «=)» из плесени/краски на стене.
+void ComposeMoldSmiley(Pixmap& base, uint32_t seed);
 // Следы крови на стене: смазанный отпечаток ладони и подтёки.
 void ComposeWallBlood(Pixmap& base, uint32_t seed);
 // Следы на полу: variant 0 - ниша у двери (ведут на север, к двери), 1 - клетка перед нишей.
 void ComposeFloorBlood(Pixmap& base, int variant, uint32_t seed);
 // Таблички. Текст рисуется векторным шрифтом: без зависимости от шрифтов Android и без зеркальности.
-void MakeSign(Pixmap& out, int kind);   // 0 = FIRE EXIT, 1 = KEEP CLEAR, 2 = LEVEL 0
+void MakeSign(Pixmap& out, int kind);   // 0 = FIRE EXIT, 1 = KEEP CLEAR, 2 = «ВЫХОД ЗА ДВЕРЬЮ» (ложная дверь), 3 = «ВЫХОД»
+// Текст в UTF-8 (латиница, цифры 0, кириллица из набора знаков ниже); векторный шрифт, поэтому текст никогда не зеркален.
 void DrawText(Pixmap& img, const char* text, float x, float y, float height, float stroke, Rgb color);
 float TextWidth(const char* text, float height);
 void Blit(Pixmap& dst, const Pixmap& src, int dx, int dy);

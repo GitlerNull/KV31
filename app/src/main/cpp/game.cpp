@@ -635,7 +635,7 @@ static void DrawHud(const Player& pl, const TouchState& t, int W, int H, bool ha
     if (Level2IsActive()) {
         Txt(T("LEVEL 2  /  INDUSTRIAL COMPLEX", "УРОВЕНЬ 2  /  ТЕХНИЧЕСКИЙ КОМПЛЕКС"),
             W * 0.5f, H * 0.025f, fs * 0.72f, Fade(Color{155,205,235,255},0.92f), 1);
-        Txt(T("OBJECTIVE: FIND THE RECESSED FIRE EXIT", "ЦЕЛЬ: НАЙТИ СКРЫТУЮ АВАРИЙНУЮ ДВЕРЬ"),
+        Txt(T("OBJECTIVE: FIND THE EXIT", "ЦЕЛЬ: НАЙТИ ВЫХОД"),
             W * 0.5f, H * 0.067f, fs * 0.58f, Fade(WHITE,0.78f), 1);
         if (Level2IsDark(pl.pos.x,pl.pos.z))
             Txt(T("DARK SECTOR  /  MOVEMENT DETECTED", "ТЁМНЫЙ СЕКТОР  /  ОБНАРУЖЕНО ДВИЖЕНИЕ"),

@@ -19,7 +19,7 @@ def load_tex(i):
     if not os.path.exists(p): return None
     d = open(p, 'rb').read(); w, h = struct.unpack_from('ii', d, 0)
     return np.frombuffer(d, dtype=np.uint8, offset=8).reshape(h, w, 4).astype(np.float32) / 255.0
-TEX = [load_tex(i) for i in range(10)]
+TEX = [load_tex(i) for i in range(11)]
 REPEAT = {1, 2, 3}
 scene = [load_scene('scene.bin')]
 
@@ -31,7 +31,7 @@ def sample(t, u, v):
     else: u = np.clip(u, 0, 0.99999); v = np.clip(v, 0, 0.99999)
     return img[(v * h).astype(int), (u * w).astype(int)]
 
-LAMP = dict(pos=np.array([89.0, 3.5, 19.4]), rad=7.0, col=np.array([0.07, 0.26, 0.72]), box=(88.0, 90.0, 15.0, 37.8))
+LAMP = dict(pos=np.array([89.0, 4.75, 26.0]), rad=9.0, col=np.array([0.08, 0.32, 0.95]), box=(88.0, 90.0, 22.8, 37.8))
 def render(name, cam, yaw, pitch, doors, W=960, H=540, view=34.0, fovy=75.0, lamp=True):
     cam = np.array(cam, np.float32)
     f = np.array([math.cos(pitch) * math.sin(yaw), math.sin(pitch), math.cos(pitch) * math.cos(yaw)], np.float32)
@@ -108,17 +108,14 @@ def render(name, cam, yaw, pitch, doors, W=960, H=540, view=34.0, fovy=75.0, lam
 
 closed = load_scene('doors_closed.bin'); opened = load_scene('doors_open.bin')
 shots = {
- 'v1_trunk_to_niche.png': ((80.0, 1.6, 43.4), math.atan2(9.0, -4.0), 0.0, closed),
- 'v2_niche_front.png': ((89.0, 1.6, 42.0), math.pi, 0.0, closed),
- 'v3_niche_close.png': ((89.0, 1.6, 39.4), math.pi, -0.02, closed),
- 'v4_passage_open.png': ((89.0, 1.6, 37.0), math.pi, 0.0, opened),
- 'v5_passage_far.png': ((89.0, 1.6 + 0.51 * 2, 27.0), math.pi, 0.0, opened),
- 'v6_final_door.png': ((89.0, 1.6 + 1.53, 19.0), math.pi, 0.0, opened),
- 'v7_arrow_north.png': ((31.0, 1.6, 43.0), math.pi, 0.0, closed),
- 'v8_arrow_south.png': ((17.0, 1.6, 43.0), 0.0, 0.0, closed),
- 'v9_trunk_start.png': ((9.0, 1.6, 42.0), math.pi / 2, 0.0, closed),
- 'v10_pump.png': ((20.0, 1.6 - 0.51, 14.6), math.pi / 2 + 0.6, 0.0, closed),
- 'v11_blood_wall.png': ((86.9, 1.6, 43.0), math.pi, 0.0, closed),
+ 'w1_gallery_smiley.png': ((96.0, 1.6, 43.6), math.atan2(-6.0, -3.0) + 0.0, 0.0, closed),
+ 'w2_niche_smiley.png': ((91.5, 1.6, 43.0), math.pi + 0.55, 0.0, closed),
+ 'w3_stairs.png': ((89.0, 1.6, 37.2), math.pi, 0.0, opened),
+ 'w4_top.png': ((89.0, 1.6 + 2.88 - 1.2, 31.5), math.pi, 0.0, opened),
+ 'w5_lure_door.png': ((89.0, 1.6 + 2.88, 29.0), math.pi, 0.0, opened),
+ 'w6_exit_door.png': ((133.0, 1.6, 98.5), math.pi, 0.0, closed),
+ 'w7_storage.png': ((100.0, 1.6, 72.5), math.pi / 2 + 0.5, 0.0, closed),
+ 'w8_corridor.png': ((97.0, 1.6, 59.0), -math.pi / 2, 0.0, closed),
 }
 which = sys.argv[2:] or list(shots)
 for k in which:
