@@ -28,6 +28,7 @@ Shader sh;
 int lView, lDir, lFlash, lFlick, lFogD, lFogC, lUnlit, lLampPos, lLampCol, lLampBox;
 char gMsg[256]; float gMsgT = 0;
 enum State { ST_MENU, ST_LEVEL_SELECT, ST_SETTINGS, ST_PLAY, ST_DEAD, ST_WON } state = ST_MENU;
+bool gWonLevel2 = false; // отдельный экран завершения технического комплекса
 struct GameSettings {
     int viewChunks = 2;                 // радиус в чанках: 1..3
     bool otherEntities = true;          // все сущности, кроме Физички
@@ -737,16 +738,35 @@ static void DrawSettingsGear(float x, float y, float r) {
     }
 }
 
+static Rectangle MainLevelRect(int W, int H) {
+    const float w = fminf(W * 0.34f, 520.0f), h = fmaxf(54.0f, H * 0.13f);
+    return Rectangle{W * 0.57f, H * 0.43f, w, h};
+}
+static Rectangle MainSettingsRect(int W, int H) {
+    const float w = fminf(W * 0.34f, 520.0f), h = fmaxf(50.0f, H * 0.115f);
+    return Rectangle{W * 0.57f, H * 0.62f, w, h};
+}
+
 static void DrawMainMenu(int W, int H) {
-    float fs = Clamp(H * 0.052f, 17.0f, 30.0f);
-    Txt(T("BACKROOMS", "ЗАКУЛИСЬЕ"), W * 0.5f, H * 0.16f, fs * 2.0f, Color{242, 218, 142, 255}, 1);
-    Txt(T("AN UNOFFICIAL BACKROOMS EXPERIENCE", "НЕОФИЦИАЛЬНОЕ ПУТЕШЕСТВИЕ ПО ЗАКУЛИСЬЮ"), W * 0.5f, H * 0.27f, fs * 0.62f, Fade(WHITE, 0.72f), 1);
-    Txt(T("TWO LOCATIONS  /  ONE WAY OUT", "ДВЕ ЛОКАЦИИ  /  ОДИН ВЫХОД"), W * 0.5f, H * 0.34f, fs * 0.58f, Fade(Color{190,205,195,255},0.82f), 1);
-    Rectangle level = CenterRect(W, H, 0.53f, 0.64f, 0.13f);
-    Rectangle opts = CenterRect(W, H, 0.70f, 0.64f, 0.13f);
-    DrawUiButton(level, T("SELECT LEVEL", "ВЫБРАТЬ УРОВЕНЬ"), fs * 0.95f, true);
-    DrawUiButton(opts, T("SETTINGS", "НАСТРОЙКИ"), fs * 0.95f, false);
-    DrawSettingsGear(opts.x + opts.width * 0.30f, opts.y + opts.height * 0.5f, fs * 0.55f);
+    const float fs = Clamp(H * 0.050f, 17.0f, 30.0f);
+    Rectangle panel{W * 0.055f, H * 0.105f, W * 0.89f, H * 0.79f};
+    DrawRectangleRounded(Rectangle{panel.x + 5, panel.y + 7, panel.width, panel.height}, 0.035f, 14, Fade(BLACK, 0.58f));
+    DrawRectangleRounded(panel, 0.035f, 14, Fade(Color{7, 12, 15, 255}, 0.91f));
+    DrawRectangleRoundedLinesEx(panel, 0.035f, 14, 2.0f, Fade(Color{154, 184, 190, 255}, 0.58f));
+
+    // Левая часть — фирменная заставка, правая — крупные сенсорные действия.
+    DrawRectangleRounded(Rectangle{W * 0.085f, H * 0.205f, 5.0f, H * 0.48f}, 0.4f, 6, Color{184, 198, 174, 235});
+    Txt("KV-31  /  FIELD ARCHIVE", W * 0.12f, H * 0.205f, fs * 0.58f, Fade(Color{153, 194, 204, 255}, 0.92f));
+    Txt(T("BACKROOMS", "ЗАКУЛИСЬЕ"), W * 0.12f, H * 0.34f, fs * 2.05f, Color{235, 224, 190, 255});
+    Txt(T("UNKNOWN TERRITORY", "НЕИЗВЕСТНАЯ ТЕРРИТОРИЯ"), W * 0.12f, H * 0.445f, fs * 0.72f, Fade(WHITE, 0.88f));
+    Txt(T("TWO SECTORS  /  ONE WAY OUT", "ДВА СЕКТОРА  /  ОДИН ВЫХОД"), W * 0.12f, H * 0.535f, fs * 0.56f, Fade(Color{180, 198, 190, 255}, 0.88f));
+    Txt(T("SIGNAL UNSTABLE", "СИГНАЛ НЕСТАБИЛЕН"), W * 0.12f, H * 0.72f, fs * 0.52f, Fade(Color{210, 112, 98, 255}, 0.90f));
+
+    Rectangle level = MainLevelRect(W, H), opts = MainSettingsRect(W, H);
+    DrawUiButton(level, T("BEGIN EXPLORATION", "НАЧАТЬ ИССЛЕДОВАНИЕ"), fs * 0.82f, true);
+    DrawUiButton(opts, T("SETTINGS", "НАСТРОЙКИ"), fs * 0.86f, false);
+    DrawSettingsGear(opts.x + opts.width * 0.18f, opts.y + opts.height * 0.5f, fs * 0.48f);
+    Txt("ANDROID  /  TOUCH INTERFACE", W * 0.5f, H * 0.84f, fs * 0.42f, Fade(WHITE, 0.42f), 1);
 }
 
 static Rectangle Level0Rect(int W, int H) { return CenterRect(W, H, 0.405f, 0.72f, 0.12f); }
@@ -820,6 +840,7 @@ static void SaveSettings() {
 }
 
 static void NewGame(Player& pl) {
+    gWonLevel2 = false;
     EntitiesSetHoundRage(false);
     Level2SetActive(false);
     Level2Reset();
@@ -828,6 +849,7 @@ static void NewGame(Player& pl) {
 }
 
 static void NewLevel2(Player& pl) {
+    gWonLevel2 = false;
     EntitiesSetHoundRage(false);
     Level2Reset();
     Level2SetActive(true);
@@ -916,19 +938,14 @@ void GameRun() {
 
             EntitiesUpdate(pl, dt, insane, settings.otherEntities);
             if (Level2Update(pl, dt)) {
-                // Верхний порог шлюза ведёт обратно на Level 0; встреча начинается сразу за дверью.
+                // Настоящая третья дверь завершает Level 2 и показывает отдельный экран победы.
+                // Ложная дверь на лестнице остаётся запертой с другой стороны без изменений.
                 Level2SetActive(false);
-                MapReset((uint32_t)GetRandomValue(1, 1 << 30));
-                pl.pos = {8.5f, 0.0f, 5.0f};
-                pl.yaw = PI * 0.5f;
-                pl.pitch = 0.0f;
-                pl.flash = false;
-                EntitiesReset();
-                EntitiesSetHoundRage(true);
-                Say(T("LEVEL 0. SHE WAS WAITING ON THE OTHER SIDE.","УРОВЕНЬ 0. ОНА ЖДАЛА ПО ТУ СТОРОНУ ДВЕРИ."),5.0f);
+                gWonLevel2 = true;
+                state = ST_WON;
+                stateT = 0.0f;
                 Haptic(350);
                 hasExit = false;
-                radioT = 100000.0f;
             }
             if (pl.sanity < 25 && !Level2IsActive()) {                  // фантомные звуки Level 0
                 phantomT -= dt;
@@ -957,8 +974,8 @@ void GameRun() {
         } else if (state == ST_MENU || state == ST_LEVEL_SELECT || state == ST_SETTINGS) {
             pl.yaw += dt * 0.035f; // медленный фоновый поворот камеры в меню
             if (state == ST_MENU && t.tapValid) {
-                Rectangle level = CenterRect(W, H, 0.53f, 0.64f, 0.13f);
-                Rectangle opts = CenterRect(W, H, 0.70f, 0.64f, 0.13f);
+                Rectangle level = MainLevelRect(W, H);
+                Rectangle opts = MainSettingsRect(W, H);
                 if (HitRect(level, t.tapPos)) state = ST_LEVEL_SELECT;
                 else if (HitRect(opts, t.tapPos)) state = ST_SETTINGS;
             } else if (state == ST_LEVEL_SELECT && t.tapValid) {
@@ -993,7 +1010,7 @@ void GameRun() {
             }
         } else {                                                            // DEAD / WON
             stateT += dt;
-            if (stateT > 1.5f && t.anyNew) { state = ST_MENU; }
+            if (stateT > 0.65f && t.anyNew) { state = ST_MENU; gWonLevel2 = false; }
         }
 
         float lampVol = state == ST_PLAY ? 0.30f + 0.25f * insane : 0.25f;
@@ -1015,6 +1032,14 @@ void GameRun() {
             if (state == ST_DEAD) {
                 Txt(endMsg, W / 2.0f, H * 0.38f, fs * 2.0f, Col(220, 40, 40, 1), 1);
                 if (stateT > 1.5f) Txt(T("Tap to return", "Коснитесь, чтобы вернуться"), W / 2.0f, H * 0.62f, fs, Fade(WHITE, 0.8f), 1);
+            } else if (gWonLevel2) {
+                Rectangle winPanel{W * 0.12f, H * 0.25f, W * 0.76f, H * 0.48f};
+                DrawRectangleRounded(winPanel, 0.035f, 12, Fade(Color{5, 13, 13, 255}, 0.88f));
+                DrawRectangleRoundedLinesEx(winPanel, 0.035f, 12, 2.0f, Fade(Color{133, 208, 167, 255}, 0.78f));
+                Txt(T("TECHNICAL COMPLEX", "ТЕХНИЧЕСКИЙ КОМПЛЕКС"), W / 2.0f, H * 0.34f, fs * 0.72f, Fade(Color{165, 205, 190, 255}, 0.9f), 1);
+                Txt(T("LEVEL COMPLETED", "УРОВЕНЬ ПРОЙДЕН"), W / 2.0f, H * 0.47f, fs * 1.75f, Color{135, 230, 165, 255}, 1);
+                Txt(T("YOU FOUND THE REAL EXIT", "ВЫ НАШЛИ НАСТОЯЩИЙ ВЫХОД"), W / 2.0f, H * 0.58f, fs * 0.72f, Fade(WHITE, 0.88f), 1);
+                if (stateT > 0.65f) Txt(T("TAP THE SCREEN TO RETURN TO THE MENU", "НАЖМИТЕ НА ЭКРАН, ЧТОБЫ ВЕРНУТЬСЯ В МЕНЮ"), W / 2.0f, H * 0.66f, fs * 0.56f, Fade(Color{215, 225, 215, 255}, 0.86f), 1);
             } else {
                 Txt(T("YOU ESCAPED TO LEVEL 1", "ВЫ СБЕЖАЛИ НА УРОВЕНЬ 1"), W / 2.0f, H * 0.36f, fs * 2.0f, Col(120, 255, 160, 1), 1);
                 Txt(T("Habitable Zone - M.E.G. outpost ahead.", "Обитаемая зона - впереди аванпост M.E.G."), W / 2.0f, H * 0.52f, fs, Fade(WHITE, 0.85f), 1);
